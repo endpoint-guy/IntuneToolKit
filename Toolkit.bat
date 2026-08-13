@@ -1,0 +1,1 @@
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File ".\Toolkit.ps1"
