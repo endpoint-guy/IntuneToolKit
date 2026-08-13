@@ -141,11 +141,29 @@ Unblock-File -Path ".\IntuneToolKit-main.zip"
 Expand-Archive -Path ".\IntuneToolKit-main.zip" -DestinationPath ".\EndpointGuyIntuneToolkit"
 ```
 
-5. Open the extracted `EndpointGuyIntuneToolkit` folder.
-6. Launch the included `EndpointguyToolkit.exe`.
-7. If Windows Defender SmartScreen displays **Windows protected your PC**, verify that the file came from this project’s official GitHub release. For an unsigned community build, select **More info** and then **Run anyway** only if you trust the download.
-8. On first launch, allow the toolkit to install `Microsoft.Graph.Authentication` for the current user if prompted.
-9. Select **Connect to Graph** and complete the work or school account sign-in.
+5. Open the extracted `EndpointGuyIntuneToolkit` folder in Windows PowerShell:
+
+```powershell
+Set-Location ".\EndpointGuyIntuneToolkit"
+```
+
+6. Set a temporary execution-policy bypass for this PowerShell process and its child processes:
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+```
+
+> This setting is temporary. It is discarded when that PowerShell window is closed and does not change the `CurrentUser` or `LocalMachine` policy. Organizational `MachinePolicy` or `UserPolicy` settings can still override it.
+
+7. From the **same PowerShell window**, launch the included EXE so it inherits the process-scoped policy:
+
+```powershell
+.\EndpointguyToolkit.exe
+```
+
+8. If Windows Defender SmartScreen displays **Windows protected your PC**, verify that the file came from this project’s official GitHub release. For an unsigned community build, select **More info** and then **Run anyway** only if you trust the download.
+9. On first launch, allow the toolkit to install `Microsoft.Graph.Authentication` for the current user if prompted.
+10. Select **Connect to Graph** and complete the work or school account sign-in.
 
 ### If the ZIP was already extracted
 
@@ -155,10 +173,12 @@ Run the following command against the extracted toolkit directory:
 Get-ChildItem ".\EndpointGuyIntuneToolkit" -Recurse -File | Unblock-File
 ```
 
-Then launch:
+Then, from the same PowerShell window, apply a process-only bypass and launch the EXE:
 
 ```powershell
-.\EndpointGuyIntuneToolkit\EndpointguyToolkit.exe
+Set-Location ".\EndpointGuyIntuneToolkit"
+Set-ExecutionPolicy Bypass -Scope Process -Force
+.\EndpointguyToolkit.exe
 ```
 
 ### Run the source script instead
@@ -169,7 +189,7 @@ After unblocking the downloaded package, users can run the source version instea
 powershell.exe -NoProfile -STA -File .\EndpointGuyIntuneToolkit\Toolkit.ps1
 ```
 
-If your organization requires `RemoteSigned`, configure it once for the current user as described in [Requirements](#requirements). A permanent `Bypass` policy is not recommended.
+If your organization requires `RemoteSigned`, configure it once for the current user as described in [Requirements](#requirements). The temporary `Process`-scope bypass documented above is preferred over a persistent `CurrentUser` or `LocalMachine` bypass.
 
 ### Verify the files are unblocked
 
@@ -548,4 +568,4 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 This project is provided as an administrative tool. Review and test it in your environment before production use. Microsoft Intune, Microsoft Entra ID, Microsoft Graph, Windows PowerShell, and WPF are Microsoft technologies and trademarks.
-<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/944e39bd-f981-4f6d-9b8d-ed21a707b56d" />
+<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/817f55fb-2303-43cb-a70c-1a622f9d3d01" />
