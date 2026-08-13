@@ -12,6 +12,7 @@ It provides a dark-themed operator interface for finding managed devices, export
 
 - [Features](#features)
 - [Requirements](#requirements)
+- [User instructions](#user-instructions)
 - [Quick start with the prebuilt EXE](#quick-start-with-the-prebuilt-exe)
 - [Run from PowerShell](#run-from-powershell)
 - [Build or rebuild the EXE](#build-or-rebuild-the-exe)
@@ -122,9 +123,68 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 > Review execution-policy changes with your security team. Group Policy can override the current-user setting.
 
+## User instructions
+
+Follow this section when downloading the toolkit from GitHub. Windows marks downloaded ZIP files as coming from the internet. If the archive is extracted while still blocked, that mark can propagate to the included PowerShell modules and cause errors stating that a module is not digitally signed.
+
+> Unblocking the downloaded archive removes its Mark-of-the-Web. It does **not** disable PowerShell execution policy globally and does not add an execution-policy bypass to the toolkit.
+
+### Recommended: unblock before extracting
+
+1. Download the toolkit ZIP from GitHub.
+2. Open Windows PowerShell in the folder containing the downloaded ZIP.
+3. Replace the example ZIP filename below if your downloaded file has a different name.
+4. Run:
+
+```powershell
+Unblock-File -Path ".\endpoint-guy-intune-toolkit.zip"
+Expand-Archive -Path ".\endpoint-guy-intune-toolkit.zip" -DestinationPath ".\EndpointGuy"
+```
+
+5. Open the extracted `EndpointGuy` folder.
+6. Launch the included `EndpointguyToolkit.exe`.
+7. If Windows Defender SmartScreen displays **Windows protected your PC**, verify that the file came from this project’s official GitHub release. For an unsigned community build, select **More info** and then **Run anyway** only if you trust the download.
+8. On first launch, allow the toolkit to install `Microsoft.Graph.Authentication` for the current user if prompted.
+9. Select **Connect to Graph** and complete the work or school account sign-in.
+
+### If the ZIP was already extracted
+
+Run the following command against the extracted toolkit directory:
+
+```powershell
+Get-ChildItem ".\EndpointGuy" -Recurse -File | Unblock-File
+```
+
+Then launch:
+
+```powershell
+.\EndpointGuy\EndpointguyToolkit.exe
+```
+
+### Run the source script instead
+
+After unblocking the downloaded package, users can run the source version instead of the EXE:
+
+```powershell
+powershell.exe -NoProfile -STA -File .\EndpointGuy\Toolkit.ps1
+```
+
+If your organization requires `RemoteSigned`, configure it once for the current user as described in [Requirements](#requirements). A permanent `Bypass` policy is not recommended.
+
+### Verify the files are unblocked
+
+This command should return no output after the files are successfully unblocked:
+
+```powershell
+Get-ChildItem ".\EndpointGuy" -Recurse -File |
+    Get-Item -Stream Zone.Identifier -ErrorAction SilentlyContinue
+```
+
 ## Quick start with the prebuilt EXE
 
 The repository includes a prebuilt `EndpointguyToolkit.exe`. Most users do not need to compile anything.
+
+For a GitHub download, complete [User instructions](#user-instructions) first so Windows does not pass Mark-of-the-Web to the included module scripts.
 
 1. Download or clone the repository.
 2. Launch the application. If needed, it installs `Microsoft.Graph.Authentication` automatically for the current user.
@@ -385,6 +445,16 @@ When no on-screen log sink is active, messages are sent to `Write-Verbose`.
 
 ## Troubleshooting
 
+### A module cannot be loaded because it is not digitally signed
+
+This commonly occurs when the GitHub ZIP was extracted before it was unblocked. Remove Mark-of-the-Web from the extracted files:
+
+```powershell
+Get-ChildItem ".\EndpointGuy" -Recurse -File | Unblock-File
+```
+
+Restart the toolkit afterward. This is preferable to changing the machine or user execution policy to `Bypass`.
+
 ### First-time Graph module setup fails
 
 The toolkit installs `Microsoft.Graph.Authentication` automatically for the current user when it is missing. If installation fails:
@@ -478,3 +548,4 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 This project is provided as an administrative tool. Review and test it in your environment before production use. Microsoft Intune, Microsoft Entra ID, Microsoft Graph, Windows PowerShell, and WPF are Microsoft technologies and trademarks.
+<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/3d068c55-afb0-4607-a818-f5a3947e118e" />
