@@ -2,8 +2,6 @@
 
 Endpoint-Guy Intune Toolkit is a Windows PowerShell 5.1 and WPF application for Microsoft Intune and Microsoft Entra ID device administration through Microsoft Graph.
 
-> **Recommended:** unblock the GitHub ZIP, then double-click `Run-Toolkit.bat`.
-
 ## Table of contents
 
 - [Modules](#modules)
