@@ -398,6 +398,23 @@ The default embedded Bulk Add window logs through `Write-Verbose`. Keep the embe
 
 ## Troubleshooting
 
+### EXE sign-in fails with “A window handle must be configured”
+
+This error is caused by Web Account Manager authentication running inside a packaged PS2EXE/WPF process without a parent window handle. The current `Toolkit.ps1` connection helper detects a packaged host, disables WAM when the installed Graph module exposes that option, and uses ordinary browser authentication instead.
+
+If your existing EXE was built before this fix:
+
+1. Apply the updated connection helper to `EndpointguyToolkit-Standalone.ps1` (or regenerate that standalone file from the updated toolkit source).
+2. Rebuild the executable:
+
+```powershell
+.\Build-Exe.ps1
+```
+
+3. Launch the newly generated `EndpointguyToolkit.exe` and select **Connect to Microsoft Graph** again.
+
+The already-built EXE cannot inherit source-code changes; it must be rebuilt after the standalone source is updated.
+
 ### `Microsoft.Graph.Authentication` is not installed
 
 Install it for the current user and restart the toolkit:
@@ -479,4 +496,4 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 This project is provided as an administrative tool. Review and test it in your environment before production use. Microsoft Intune, Microsoft Entra ID, Microsoft Graph, Windows PowerShell, and WPF are Microsoft technologies and trademarks.
-<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/613f0188-e698-48d7-85fe-269550cbbcea" />
+<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/2e9fd655-ba42-439e-9825-671ed3c34b08" />
