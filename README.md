@@ -2,10 +2,12 @@
 
 Endpoint-Guy Intune Toolkit is a Windows PowerShell 5.1 and WPF application for Microsoft Intune and Microsoft Entra ID device administration through Microsoft Graph.
 
+> **Recommended:** unblock the GitHub ZIP, then double-click `Run-Toolkit.bat`.
+
 ## Table of contents
 
-- [Modules](#modules)
 - [Requirements](#requirements)
+- [Modules](#modules)
 - [User instructions](#user-instructions)
 - [Microsoft Graph permissions](#microsoft-graph-permissions)
 - [Using the toolkit](#using-the-toolkit)
@@ -15,6 +17,16 @@ Endpoint-Guy Intune Toolkit is a Windows PowerShell 5.1 and WPF application for 
 - [Diagnostics and safety](#diagnostics-and-safety)
 - [Development notes](#development-notes)
 - [Acknowledgments](#acknowledgments)
+
+## Requirements
+
+- Windows 10 or Windows 11
+- Windows PowerShell 5.1
+- Network access to the PowerShell Gallery for first-time setup
+- Network access to Microsoft Graph
+- Appropriate Microsoft Intune and Entra roles
+
+The toolkit automatically installs `Microsoft.Graph.Authentication` for the current user if it is missing.
 
 ## Modules
 
@@ -60,16 +72,6 @@ Location: `Modules\BulkAddToGroup\BulkAddToGroup.ps1`
 - Shows matched, unmatched, and ambiguous names before writing.
 - Adds matched devices to one eligible assigned security group.
 - Uses a confirmation prompt that defaults to **No** and supports result export.
-
-## Requirements
-
-- Windows 10 or Windows 11
-- Windows PowerShell 5.1
-- Network access to the PowerShell Gallery for first-time setup
-- Network access to Microsoft Graph
-- Appropriate Microsoft Intune and Entra roles
-
-The toolkit automatically installs `Microsoft.Graph.Authentication` for the current user if it is missing.
 
 ## User instructions
 
@@ -196,5 +198,4 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 Review every included PowerShell script before use, especially before running the toolkit in production. You are responsible for validating its behavior, permissions, security impact, exported data, and suitability for your environment.
-
-<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/a9d2825e-54b7-4f33-b8be-b78ddfc162f8" />
+<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/3fb5f6c1-c585-4d83-b4e6-456ca29b3170" />
