@@ -137,11 +137,11 @@ Follow this section when downloading the toolkit from GitHub. Windows marks down
 4. Run:
 
 ```powershell
-Unblock-File -Path ".\endpoint-guy-intune-toolkit.zip"
-Expand-Archive -Path ".\endpoint-guy-intune-toolkit.zip" -DestinationPath ".\EndpointGuy"
+Unblock-File -Path ".\IntuneToolKit-main.zip"
+Expand-Archive -Path ".\IntuneToolKit-main.zip" -DestinationPath ".\EndpointGuyIntuneToolkit"
 ```
 
-5. Open the extracted `EndpointGuy` folder.
+5. Open the extracted `EndpointGuyIntuneToolkit` folder.
 6. Launch the included `EndpointguyToolkit.exe`.
 7. If Windows Defender SmartScreen displays **Windows protected your PC**, verify that the file came from this project’s official GitHub release. For an unsigned community build, select **More info** and then **Run anyway** only if you trust the download.
 8. On first launch, allow the toolkit to install `Microsoft.Graph.Authentication` for the current user if prompted.
@@ -152,13 +152,13 @@ Expand-Archive -Path ".\endpoint-guy-intune-toolkit.zip" -DestinationPath ".\End
 Run the following command against the extracted toolkit directory:
 
 ```powershell
-Get-ChildItem ".\EndpointGuy" -Recurse -File | Unblock-File
+Get-ChildItem ".\EndpointGuyIntuneToolkit" -Recurse -File | Unblock-File
 ```
 
 Then launch:
 
 ```powershell
-.\EndpointGuy\EndpointguyToolkit.exe
+.\EndpointGuyIntuneToolkit\EndpointguyToolkit.exe
 ```
 
 ### Run the source script instead
@@ -166,7 +166,7 @@ Then launch:
 After unblocking the downloaded package, users can run the source version instead of the EXE:
 
 ```powershell
-powershell.exe -NoProfile -STA -File .\EndpointGuy\Toolkit.ps1
+powershell.exe -NoProfile -STA -File .\EndpointGuyIntuneToolkit\Toolkit.ps1
 ```
 
 If your organization requires `RemoteSigned`, configure it once for the current user as described in [Requirements](#requirements). A permanent `Bypass` policy is not recommended.
@@ -176,7 +176,7 @@ If your organization requires `RemoteSigned`, configure it once for the current 
 This command should return no output after the files are successfully unblocked:
 
 ```powershell
-Get-ChildItem ".\EndpointGuy" -Recurse -File |
+Get-ChildItem ".\EndpointGuyIntuneToolkit" -Recurse -File |
     Get-Item -Stream Zone.Identifier -ErrorAction SilentlyContinue
 ```
 
@@ -450,7 +450,7 @@ When no on-screen log sink is active, messages are sent to `Write-Verbose`.
 This commonly occurs when the GitHub ZIP was extracted before it was unblocked. Remove Mark-of-the-Web from the extracted files:
 
 ```powershell
-Get-ChildItem ".\EndpointGuy" -Recurse -File | Unblock-File
+Get-ChildItem ".\EndpointGuyIntuneToolkit" -Recurse -File | Unblock-File
 ```
 
 Restart the toolkit afterward. This is preferable to changing the machine or user execution policy to `Bypass`.
@@ -548,4 +548,4 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 This project is provided as an administrative tool. Review and test it in your environment before production use. Microsoft Intune, Microsoft Entra ID, Microsoft Graph, Windows PowerShell, and WPF are Microsoft technologies and trademarks.
-<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/3d068c55-afb0-4607-a818-f5a3947e118e" />
+<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/3d66077c-01f1-4508-adbe-5575bb5f121d" />
