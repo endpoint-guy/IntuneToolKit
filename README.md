@@ -101,6 +101,7 @@ Adds device names from a CSV file to one eligible assigned security group.
 - Windows 10 or Windows 11
 - Windows PowerShell 5.1
 - PowerShell must run in Single-Threaded Apartment mode (`-STA`) for WPF
+- PowerShell execution policy configured to permit local scripts for the current user (`RemoteSigned`)
 - Microsoft Graph PowerShell authentication module:
 
 ```powershell
@@ -133,20 +134,30 @@ When an action module is run independently, it requests `DeviceManagementManaged
 
 ## Installation
 
-### 1. Clone the repository
+### 1. Configure the PowerShell execution policy
+
+Allow locally created scripts and downloaded scripts signed by a trusted publisher for the current Windows user:
+
+```powershell
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+> Run this command only if it complies with your organization’s security policy. `RemoteSigned` is a persistent current-user setting; it is different from the process-specific `-ExecutionPolicy Bypass` option shown in the launch command.
+
+### 2. Clone the repository
 
 ```powershell
 git clone https://github.com/<your-org-or-user>/endpoint-guy-intune-toolkit.git
 cd endpoint-guy-intune-toolkit
 ```
 
-### 2. Install the Graph authentication module
+### 3. Install the Graph authentication module
 
 ```powershell
 Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
 ```
 
-### 3. Confirm the module is available
+### 4. Confirm the module is available
 
 ```powershell
 Get-Module -ListAvailable Microsoft.Graph.Authentication
@@ -468,4 +479,4 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 This project is provided as an administrative tool. Review and test it in your environment before production use. Microsoft Intune, Microsoft Entra ID, Microsoft Graph, Windows PowerShell, and WPF are Microsoft technologies and trademarks.
-<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/130bb7fe-ff52-478f-9e78-33bb9d03b3ce" />
+<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/613f0188-e698-48d7-85fe-269550cbbcea" />
