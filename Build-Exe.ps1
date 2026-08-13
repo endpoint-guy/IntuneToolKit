@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Compiles EndpointguyToolkit-Standalone.ps1 into a single Windows executable.
+    Compiles Toolkit.ps1 into a single Windows executable.
 
 .DESCRIPTION
     Wraps PS2EXE with the flags a WPF application requires:
@@ -17,12 +17,12 @@
     .\Build-Exe.ps1 -IconFile .\toolkit.ico -Version 1.1.0.0
 
 .NOTES
-    Run from Windows PowerShell 5.1 in the folder containing the standalone script.
+    Run from Windows PowerShell 5.1 in the folder containing the Toolkit.ps1 source script.
 #>
 
 [CmdletBinding()]
 param(
-    [string]$Source  = (Join-Path $PSScriptRoot 'EndpointguyToolkit-Standalone.ps1'),
+    [string]$Source  = (Join-Path $PSScriptRoot 'Toolkit.ps1'),
     [string]$Output  = (Join-Path $PSScriptRoot 'EndpointguyToolkit.exe'),
     [string]$IconFile,
     [string]$Version = '1.0.0.0'

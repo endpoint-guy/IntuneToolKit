@@ -97,17 +97,22 @@ Adds many devices listed in a CSV file to one eligible assigned security group.
 
 - Windows 10 or Windows 11
 - Windows PowerShell 5.1
-- Microsoft Graph PowerShell authentication module
+- Internet access to the PowerShell Gallery on first launch if `Microsoft.Graph.Authentication` is not already installed
 - Network access to `https://graph.microsoft.com`
 - A Microsoft Entra account permitted to use or consent to the requested delegated scopes
 - Appropriate Microsoft Intune and Entra administrative roles for the selected operations
 - PowerShell execution policy that permits local scripts when running or rebuilding from source
 
-Install the Graph authentication module for the current user:
+### Automatic first-time setup
 
-```powershell
-Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
-```
+When the toolkit starts, it checks for `Microsoft.Graph.Authentication`. If the module is missing, the toolkit:
+
+1. Enables TLS 1.2 for the PowerShell Gallery connection.
+2. Installs the NuGet package provider for the current user when required.
+3. Installs `Microsoft.Graph.Authentication` with `-Scope CurrentUser`.
+4. Imports the module and continues launching.
+
+This process does not normally require administrator rights. The only manual configuration expected from the user is the execution-policy setting below.
 
 Configure the current-user execution policy if permitted by your organization:
 
@@ -122,9 +127,9 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 The repository includes a prebuilt `EndpointguyToolkit.exe`. Most users do not need to compile anything.
 
 1. Download or clone the repository.
-2. Install `Microsoft.Graph.Authentication` using the command in [Requirements](#requirements).
+2. Launch the application. If needed, it installs `Microsoft.Graph.Authentication` automatically for the current user.
 3. Keep `EndpointguyToolkit.exe` and the `Modules` folder together in the repository layout.
-4. Launch `EndpointguyToolkit.exe`.
+4. Complete the first-time module setup prompt if it appears.
 5. Select **Connect to Graph**.
 6. Complete the Microsoft work or school account sign-in.
 7. Search for a device and use the required action.
@@ -133,7 +138,7 @@ The repository includes a prebuilt `EndpointguyToolkit.exe`. Most users do not n
 .\EndpointguyToolkit.exe
 ```
 
-> The EXE packages the WPF entry script, but it does not embed or replace `Microsoft.Graph.Authentication`. That module must be installed on every computer that runs the application.
+> On first launch, the toolkit checks for `Microsoft.Graph.Authentication`. If it is missing, the toolkit installs it from the PowerShell Gallery for the current user without requiring administrator elevation.
 
 ## Run from PowerShell
 
@@ -380,13 +385,16 @@ When no on-screen log sink is active, messages are sent to `Write-Verbose`.
 
 ## Troubleshooting
 
-### The application says `Microsoft.Graph.Authentication` is missing
+### First-time Graph module setup fails
 
-```powershell
-Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
-```
+The toolkit installs `Microsoft.Graph.Authentication` automatically for the current user when it is missing. If installation fails:
 
-Restart the toolkit after installation.
+- Confirm the computer can reach the PowerShell Gallery.
+- Confirm PowerShell Gallery access is not blocked by a proxy or organizational policy.
+- Confirm the current user can write to the current-user PowerShell module path.
+- Restart the toolkit after connectivity or policy issues are resolved.
+
+No administrator elevation is normally required because installation uses `-Scope CurrentUser`.
 
 ### The EXE does not contain recent source changes
 
@@ -402,7 +410,7 @@ Then replace the old `EndpointguyToolkit.exe` with the newly generated file.
 
 - Confirm Windows PowerShell 5.1 is being used.
 - When running the script, include `-STA`.
-- Confirm `Microsoft.Graph.Authentication` is installed for the same user and PowerShell edition.
+- If first-time setup failed, confirm the PowerShell Gallery is reachable and restart the toolkit.
 - Confirm the source file was not modified with a text editor that damaged a PowerShell here-string terminator.
 - When using `-XamlPath`, verify the XAML exists and contains all required named controls.
 
@@ -470,5 +478,3 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 This project is provided as an administrative tool. Review and test it in your environment before production use. Microsoft Intune, Microsoft Entra ID, Microsoft Graph, Windows PowerShell, and WPF are Microsoft technologies and trademarks.
-
-<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/9c54b448-9590-4aa6-855f-ccfca6a81d11" />
