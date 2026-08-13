@@ -548,4 +548,4 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 This project is provided as an administrative tool. Review and test it in your environment before production use. Microsoft Intune, Microsoft Entra ID, Microsoft Graph, Windows PowerShell, and WPF are Microsoft technologies and trademarks.
-<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/3d66077c-01f1-4508-adbe-5575bb5f121d" />
+<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/944e39bd-f981-4f6d-9b8d-ed21a707b56d" />
