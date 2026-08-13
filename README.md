@@ -6,7 +6,7 @@ Endpoint-Guy Intune Toolkit is a Windows PowerShell 5.1 and WPF application for 
 
 ## Table of contents
 
-- [Features](#features)
+- [Modules](#modules)
 - [Requirements](#requirements)
 - [User instructions](#user-instructions)
 - [Microsoft Graph permissions](#microsoft-graph-permissions)
@@ -15,44 +15,53 @@ Endpoint-Guy Intune Toolkit is a Windows PowerShell 5.1 and WPF application for 
 - [Group eligibility](#group-eligibility)
 - [Repository structure](#repository-structure)
 - [Diagnostics and safety](#diagnostics-and-safety)
-- [Troubleshooting](#troubleshooting)
 - [Development notes](#development-notes)
 - [Acknowledgments](#acknowledgments)
 
-## Features
+## Modules
 
-### Managed-device search
+The toolkit consists of a core application plus optional action modules. The main application remains useful even when one or more module folders are not present; missing modules disable only their corresponding actions.
 
-- Interactive delegated Microsoft Graph sign-in.
-- Search by device name, serial number, or primary username.
-- Contains or exact matching.
-- Local managed-device cache with manual refresh.
-- Displays OS, compliance, ownership, model, user, and last sync.
-- UTF-8 CSV export.
+### Core toolkit — no action modules required
 
-### Copy Device Groups
+Without the attached action modules, `Toolkit.ps1` can still:
 
-- Copies eligible assigned security-group memberships from a source device to a target device.
-- Shows eligible and ineligible memberships.
-- Requires confirmation.
-- Reports **Added**, **Already a member**, or **Failed** per group.
+- Connect interactively to Microsoft Graph and display the connected account.
+- Load and cache the Intune managed-device inventory.
+- Search devices by device name, serial number, or primary username.
+- Use contains matching or **Exact match only**.
+- Display device name, serial number, user, operating system, OS version, compliance, ownership, model, and last sync.
+- Refresh the local device cache.
+- Select and review a managed device.
+- Export the current search results to a UTF-8 CSV file.
 
-### Remove Device Groups
+### Copy Device Groups module
 
-- Removes a device from eligible assigned security groups.
-- Preselects eligible memberships.
-- Confirmation defaults to **No**.
-- Reports **Removed**, **Not a member**, or **Failed** per group.
+Location: `Modules\CopyDeviceGroups\CopyDeviceGroups.ps1`
 
-### Bulk Add to Group
+- Copies eligible assigned security-group memberships from a selected source device to a target device.
+- Shows eligible and ineligible memberships before writing.
+- Preselects eligible groups and requires confirmation.
+- Reports **Added**, **Already a member**, or **Failed** for each group.
+
+### Remove Device Groups module
+
+Location: `Modules\RemoveDeviceGroups\RemoveDeviceGroups.ps1`
+
+- Removes the selected device from eligible assigned security groups.
+- Preselects eligible memberships while leaving ineligible memberships read-only.
+- Uses a confirmation prompt that defaults to **No**.
+- Reports **Removed**, **Not a member**, or **Failed** for each group.
+
+### Bulk Add to Group module
+
+Location: `Modules\BulkAddToGroup\BulkAddToGroup.ps1`
 
 - Reads device names from the first CSV column.
-- Reads every nonblank line, including line 1.
-- Ignores blank and duplicate names.
-- Shows unmatched and ambiguous names before writing.
-- Adds matched devices to one eligible group.
-- Confirmation defaults to **No**.
-- Exports results.
+- Reads every nonblank line, including line 1, and ignores duplicate names.
+- Shows matched, unmatched, and ambiguous names before writing.
+- Adds matched devices to one eligible assigned security group.
+- Uses a confirmation prompt that defaults to **No** and supports result export.
 
 ## Requirements
 
@@ -174,35 +183,6 @@ PowerShell files contain embedded XAML for runtime use. External XAML supports U
 - Writes occur one item at a time.
 - Graph paging follows `@odata.nextLink`.
 
-## Troubleshooting
-
-### A module is not digitally signed
-
-Windows may have marked the downloaded scripts as coming from the internet. In Windows PowerShell, run:
-
-```powershell
-Get-ChildItem ".\EndpointGuyIntuneToolkit" -Recurse -File | Unblock-File
-```
-
-Then double-click `Run-Toolkit.bat` again.
-
-### First-time setup fails
-
-- Confirm access to the PowerShell Gallery.
-- Confirm proxy or policy does not block module installation.
-- Restart after resolving connectivity.
-
-### Sign-in fails
-
-- Confirm account, tenant, Conditional Access, consent, and administrative roles.
-
-### A device is not found
-
-- Refresh the cache.
-- Try serial number or username.
-- Clear exact matching.
-- Confirm the device has an Entra device ID.
-
 ## Development notes
 
 - Module functions use `Cdg`, `Rdg`, and `Bag` prefixes.
@@ -219,31 +199,4 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 
 Review every included PowerShell script before use, especially before running the toolkit in production. You are responsible for validating its behavior, permissions, security impact, exported data, and suitability for your environment.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/7d707dbf-ee15-4cd2-8124-249cd6c19fc9" />
+<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/a9d2825e-54b7-4f33-b8be-b78ddfc162f8" />
