@@ -12,6 +12,7 @@ Endpoint-Guy Intune Toolkit is a Windows PowerShell 5.1 and WPF application for 
 - [Microsoft Graph permissions](#microsoft-graph-permissions)
 - [Using the toolkit](#using-the-toolkit)
 - [Bulk-add CSV format](#bulk-add-csv-format)
+- [App dependency checks](#app-dependency-checks)
 - [Group eligibility](#group-eligibility)
 - [Repository structure](#repository-structure)
 - [Diagnostics and safety](#diagnostics-and-safety)
@@ -73,6 +74,16 @@ Location: `Modules\BulkAddToGroup\BulkAddToGroup.ps1`
 - Adds matched devices to one eligible assigned security group.
 - Uses a confirmation prompt that defaults to **No** and supports result export.
 
+### App Dependency Check module
+
+Location: `Modules\AppDependencyCheck\AppDependencyCheck.ps1`
+
+- Maps Win32 app dependency and supersedence relationships.
+- Flags circular references, chains deeper than five levels, and unassigned dependencies.
+- Read-only: issues only GET requests and never writes to Intune.
+- Lists every Win32 app A-Z in a drop-down; scan one app or all of them.
+- Exports findings to CSV.
+
 ## User instructions
 
 1. Download the toolkit ZIP from GitHub.
@@ -97,6 +108,7 @@ Location: `Modules\BulkAddToGroup\BulkAddToGroup.ps1`
 | `Group.ReadWrite.All` | Support membership operations. |
 | `GroupMember.ReadWrite.All` | Add and remove members. |
 | `User.Read.All` | Read associated user information. |
+| `DeviceManagementApps.Read.All` | Read Win32 app and relationship data. |
 
 > Tenant policy can require administrator consent and suitable administrative roles.
 
@@ -134,6 +146,13 @@ Location: `Modules\BulkAddToGroup\BulkAddToGroup.ps1`
 4. Choose an eligible destination group.
 5. Confirm and review or export results.
 
+### App dependency check
+
+1. Select **App Dependency Check**.
+2. Pick an app from the drop-down, or leave it on **(All apps)**.
+3. Select **Scan**.
+4. Review the findings and export them if needed.
+
 ## Bulk-add CSV format
 
 Every nonblank line—including line 1—is data. The first column supplies the device name.
@@ -148,6 +167,20 @@ KIOSK-014
 - Extra columns are ignored.
 - Duplicate names are ignored case-insensitively.
 - A selectable row must match exactly one managed device with an Entra device object.
+
+## App dependency checks
+
+The App Dependency Check module is read-only. It issues only GET requests and never modifies apps, relationships, or assignments.
+
+It reports three faults that stop a Win32 app chain from installing:
+
+| Finding | Severity | Meaning |
+|---|---|---|
+| Circular reference | Critical | The chain returns to an app it has already visited. Intune cannot resolve it and the install never completes. |
+| Chain too deep | Critical | The chain runs past the five levels Intune processes. Anything below level five is ignored at install time. |
+| Unassigned dependency | Warning | A dependency has no assignment, so Intune has nothing to install and the parent app stays blocked. |
+
+Supersedence relationships are included by default and can be excluded. Findings can be exported to CSV.
 
 ## Group eligibility
 
@@ -167,9 +200,12 @@ Only assigned, cloud-managed security groups are writable. Dynamic, rule-driven,
     ├── RemoveDeviceGroups
     │   ├── RemoveDeviceGroups.ps1
     │   └── RemoveDeviceGroups.xaml
-    └── BulkAddToGroup
-        ├── BulkAddToGroup.ps1
-        └── BulkAddToGroup.xaml
+    ├── BulkAddToGroup
+    │   ├── BulkAddToGroup.ps1
+    │   └── BulkAddToGroup.xaml
+    └── AppDependencyCheck
+        ├── AppDependencyCheck.ps1
+        └── AppDependencyCheck.xaml
 ```
 
 PowerShell files contain embedded XAML for runtime use. External XAML supports UI development through `-XamlPath`.
@@ -182,10 +218,11 @@ PowerShell files contain embedded XAML for runtime use. External XAML supports U
 - High-impact operations require confirmation.
 - Writes occur one item at a time.
 - Graph paging follows `@odata.nextLink`.
+- App Dependency Check is read-only and issues only GET requests.
 
 ## Development notes
 
-- Module functions use `Cdg`, `Rdg`, and `Bag` prefixes.
+- Module functions use `Cdg`, `Rdg`, `Bag`, and `Adc` prefixes.
 - Grid rows implement `INotifyPropertyChanged`.
 - Intune and Entra device records are resolved separately.
 - Keep embedded and external XAML synchronized.
@@ -198,4 +235,4 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 Review every included PowerShell script before use, especially before running the toolkit in production. You are responsible for validating its behavior, permissions, security impact, exported data, and suitability for your environment.
-<img width="268" height="32766" alt="image" src="https://github.com/user-attachments/assets/3fb5f6c1-c585-4d83-b4e6-456ca29b3170" />
+

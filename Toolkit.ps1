@@ -14,17 +14,21 @@
         selected device from its assigned security groups, with confirmation
       - Bulk Add to Group module (Modules\BulkAddToGroup) - adds every device
         named in a CSV to one assigned security group, with confirmation
+      - App Dependency Check module (Modules\AppDependencyCheck) - read-only
+        report listing every app that depends on a selected Win32 app,
+        directly or indirectly, so the blast radius of changing or
+        removing it is visible before the change is made
       - Remaining Device Actions are stubbed with "Coming soon"
 
 .NOTES
-    SELF-CONTAINED BUILD - the WPF XAML is embedded in this file, so there is no
-    MainWindow.xaml dependency at runtime and it can be compiled with PS2EXE.
+    SELF-CONTAINED UI - the WPF XAML is embedded in this file, so there is no
+    MainWindow.xaml dependency at runtime. Use -XamlPath for UI development.
 
     Requires: Windows PowerShell 5.1; Graph authentication module installs automatically
         First launch requires access to the PowerShell Gallery
 
-    Run as script:  powershell.exe -STA -ExecutionPolicy Bypass -File .\EndpointguyToolkit-Standalone.ps1
-    Compile to exe: .\Build-Exe.ps1
+    Run: powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\Toolkit.ps1
+    Or double-click Run-Toolkit.bat
 #>
 
 [CmdletBinding()]
@@ -40,36 +44,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
-
-# A PS2EXE build compiled with -noConsole has no console HWND. Recent Graph
-# PowerShell versions use WAM for interactive authentication and require a
-# parent handle. This wrapper creates a temporary hidden console HWND for WAM
-# without changing the Connect-MgGraph authentication method.
-if (-not ('EndpointguyNativeWindow' -as [type])) {
-    $nativeCode = @(
-        'using System;'
-        'using System.Runtime.InteropServices;'
-        ''
-        'public static class EndpointguyNativeWindow'
-        '{'
-        '    [DllImport("kernel32.dll", SetLastError = true)]'
-        '    [return: MarshalAs(UnmanagedType.Bool)]'
-        '    public static extern bool AllocConsole();'
-        ''
-        '    [DllImport("kernel32.dll", SetLastError = true)]'
-        '    [return: MarshalAs(UnmanagedType.Bool)]'
-        '    public static extern bool FreeConsole();'
-        ''
-        '    [DllImport("kernel32.dll")]'
-        '    public static extern IntPtr GetConsoleWindow();'
-        ''
-        '    [DllImport("user32.dll")]'
-        '    [return: MarshalAs(UnmanagedType.Bool)]'
-        '    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);'
-        '}'
-    ) -join [Environment]::NewLine
-    Add-Type -TypeDefinition $nativeCode
-}
 
 # ---------------------------------------------------------------------------
 # Graph authentication module
@@ -111,22 +85,22 @@ Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 # ---------------------------------------------------------------------------
 # Modules
 #
-# Each action lives in its own folder under Modules\. When compiled with
-# PS2EXE there is no $PSScriptRoot, so the exe directory is used instead.
+# Each action lives in its own folder under Modules\.
+# Modules are resolved relative to the Toolkit.ps1 directory.
 # A missing module is not fatal - the matching button just reports it.
 #
 # Each entry is a path relative to the toolkit root. The legacy flat layout
 # (module sitting next to Toolkit.ps1) is still probed as a fallback so a
 # partially migrated folder keeps working.
 # ---------------------------------------------------------------------------
-$Script:ModuleRoot = if ($PSScriptRoot) { $PSScriptRoot }
-                     else { Split-Path -Parent ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) }
+$Script:ModuleRoot = $PSScriptRoot
 
 $Script:ModulesLoaded = @{}
 
 foreach ($module in @('Modules\CopyDeviceGroups\CopyDeviceGroups.ps1',
                       'Modules\RemoveDeviceGroups\RemoveDeviceGroups.ps1',
-                      'Modules\BulkAddToGroup\BulkAddToGroup.ps1')) {
+                      'Modules\BulkAddToGroup\BulkAddToGroup.ps1',
+                      'Modules\AppDependencyCheck\AppDependencyCheck.ps1')) {
     $moduleName = Split-Path -Leaf $module
 
     # Preferred subfolder location, then the old flat location.
@@ -162,6 +136,7 @@ $Script:GraphScopes = @(
     'Group.ReadWrite.All'
     'GroupMember.ReadWrite.All'
     'User.Read.All'
+    'DeviceManagementApps.Read.All'
 )
 
 # ---------------------------------------------------------------------------
@@ -566,6 +541,11 @@ $XamlString = @'
                         <Separator Background="{StaticResource SeparatorBrush}" Margin="0,0,0,12"/>
                         <TextBlock Text="Bulk Actions" Style="{StaticResource CardHeader}" Margin="0,0,0,12"/>
                         <Button x:Name="BtnBulkAddGroup" Style="{StaticResource ActionButton}" Content="Bulk Add to Group"/>
+                        <Separator Background="{StaticResource SeparatorBrush}" Margin="0,14,0,12"/>
+                        <TextBlock Text="Reporting" Style="{StaticResource CardHeader}" Margin="0,0,0,12"/>
+                        <Button x:Name="BtnAppDependency" Style="{StaticResource ActionButton}"
+                                Content="App Dependency Check"
+                                ToolTip="Read-only. Lists every app that depends on a selected Win32 app, so you can see what breaks before changing it."/>
                     </StackPanel>
 
                     <TextBlock Grid.Row="5" TextWrapping="Wrap" FontSize="11.5"
@@ -715,7 +695,7 @@ foreach ($required in @('BtnConnect','BtnSearch','BtnRefreshCache','GridDevices'
                         'ConnIcon','ConnStatus','ConnAccount','ResultCount',
                         'SelectedDeviceText','ClockText','BtnExportCsv','LinkSite',
                         'BtnCopyGroups','BtnRemoveGroups',
-                        'BtnBulkAddGroup')) {
+                        'BtnBulkAddGroup','BtnAppDependency')) {
     if (-not (Get-Variable -Name $required -Scope Script -ErrorAction SilentlyContinue)) {
         [System.Windows.MessageBox]::Show(
             "Control '$required' was not found in the XAML.",
@@ -900,51 +880,12 @@ function Invoke-DeviceSearch {
 }
 
 # ---------------------------------------------------------------------------
-# WAM parent window for packaged EXE authentication
-# ---------------------------------------------------------------------------
-function Start-EndpointguyAuthWindow {
-    # powershell.exe already has a console HWND. Only a PS2EXE -noConsole
-    # process needs a temporary one for the Graph SDK WAM broker.
-    if ([EndpointguyNativeWindow]::GetConsoleWindow() -ne [IntPtr]::Zero) {
-        return $false
-    }
-
-    if (-not [EndpointguyNativeWindow]::AllocConsole()) {
-        throw 'Microsoft Graph sign-in requires a parent window, but a temporary authentication window could not be created.'
-    }
-
-    $handle = [EndpointguyNativeWindow]::GetConsoleWindow()
-    if ($handle -eq [IntPtr]::Zero) {
-        [void][EndpointguyNativeWindow]::FreeConsole()
-        throw 'Microsoft Graph sign-in requires a parent window, but Windows did not return its handle.'
-    }
-
-    # SW_HIDE = 0. The HWND remains valid while the console stays invisible.
-    [void][EndpointguyNativeWindow]::ShowWindow($handle, 0)
-    return $true
-}
-
-function Stop-EndpointguyAuthWindow {
-    param([bool]$Created)
-    if ($Created) { [void][EndpointguyNativeWindow]::FreeConsole() }
-}
-
-# ---------------------------------------------------------------------------
 # Event handlers
 # ---------------------------------------------------------------------------
 $BtnConnect.Add_Click({
     Set-Busy $true
-    $authWindowCreated = $false
-    $previousWindowState = $Window.WindowState
     try {
         Set-Status 'Opening sign-in prompt...'
-        $authWindowCreated = Start-EndpointguyAuthWindow
-
-        # Connect-MgGraph cannot accept the WPF HWND directly. Minimize the
-        # toolkit while WAM is active so its account and credential windows
-        # cannot be trapped behind the application.
-        $Window.WindowState = [System.Windows.WindowState]::Minimized
-
         $params = @{ Scopes = $Script:GraphScopes; NoWelcome = $true }
         if ($TenantId) { $params['TenantId'] = $TenantId }
         Connect-MgGraph @params
@@ -957,17 +898,7 @@ $BtnConnect.Add_Click({
         Set-Status "Connection failed: $($_.Exception.Message)"
         [System.Windows.MessageBox]::Show($_.Exception.Message,'Connection failed','OK','Error') | Out-Null
     }
-    finally {
-        Stop-EndpointguyAuthWindow -Created $authWindowCreated
-
-        # Restore the toolkit whether sign-in succeeded, failed, or was cancelled.
-        $Window.WindowState = $previousWindowState
-        [void]$Window.Activate()
-        $Window.Topmost = $true
-        $Window.Topmost = $false
-
-        Set-Busy $false
-    }
+    finally { Set-Busy $false }
 })
 
 $BtnSearch.Add_Click({ Invoke-DeviceSearch })
@@ -1079,6 +1010,26 @@ $BtnBulkAddGroup.Add_Click({
     catch {
         Set-Status "Bulk Add to Group failed: $($_.Exception.Message)"
         [System.Windows.MessageBox]::Show($_.Exception.Message,'Bulk Add to Group','OK','Error') | Out-Null
+    }
+})
+$BtnAppDependency.Add_Click({
+    if (-not (Test-Connected)) { return }
+
+    if (-not (Get-Command -Name Show-AppDependencyCheckWindow -ErrorAction SilentlyContinue)) {
+        [System.Windows.MessageBox]::Show(
+            "AppDependencyCheck.ps1 was not found.`n`nExpected in:`n  $(Join-Path $Script:ModuleRoot 'Modules\AppDependencyCheck')",
+            'Module missing','OK','Warning') | Out-Null
+        return
+    }
+
+    Set-Status 'Opening App Dependency Check...'
+    try {
+        Show-AppDependencyCheckWindow -Owner $Window
+        Set-Status 'App Dependency Check closed.'
+    }
+    catch {
+        Set-Status "App Dependency Check failed: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show($_.Exception.Message,'App Dependency Check','OK','Error') | Out-Null
     }
 })
 
