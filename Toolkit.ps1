@@ -6,6 +6,9 @@
     Phase 1 build:
       - Connect to Microsoft Graph (interactive) with live connection status indicator
       - Device search by Device Name / Serial Number / Primary Username (contains or exact)
+      - Devices imported into Windows Autopilot but NOT yet enrolled in
+        Intune are included in the search, so a brand new machine can be
+        found (and added to groups) before it ever enrols
       - Local device cache so repeat searches are instant
       - Export results to CSV
       - Copy Device Groups module (Modules\CopyDeviceGroups) - copies assigned
@@ -137,6 +140,7 @@ $Script:GraphScopes = @(
     'GroupMember.ReadWrite.All'
     'User.Read.All'
     'DeviceManagementApps.Read.All'
+    'DeviceManagementServiceConfig.Read.All'
 )
 
 # ---------------------------------------------------------------------------
@@ -618,6 +622,7 @@ $XamlString = @'
                                   RowHeight="26"
                                   CanUserSortColumns="True">
                             <DataGrid.Columns>
+                                <DataGridTextColumn Header="Source"        Binding="{Binding Source}"       Width="95"/>
                                 <DataGridTextColumn Header="Device Name"   Binding="{Binding DeviceName}"   Width="200"/>
                                 <DataGridTextColumn Header="Serial Number" Binding="{Binding SerialNumber}" Width="140"/>
                                 <DataGridTextColumn Header="User"          Binding="{Binding User}"         Width="220"/>
@@ -814,6 +819,86 @@ function Get-ManagedDeviceCache {
             Enrolled      = if ($d.enrolledDateTime) { ([datetime]$d.enrolledDateTime).ToLocalTime().ToString('yyyy-MM-dd HH:mm') } else { '' }
             IntuneId      = $d.id
             EntraDeviceId = $d.azureADDeviceId
+            Source          = 'Intune'
+            EnrollmentState = 'enrolled'
+            GroupTag        = ''
+        }
+    }
+}
+
+function Get-AutopilotProperty {
+    param($Object, [string]$Name, $Default = '')
+    if ((Test-GraphProperty $Object $Name) -and ($null -ne $Object.$Name)) { $Object.$Name }
+    else { $Default }
+}
+
+function Format-AutopilotDate {
+    param($Value)
+    if (-not $Value) { return '' }
+    try   { ([datetime]$Value).ToLocalTime().ToString('yyyy-MM-dd HH:mm') }
+    catch { '' }
+}
+
+# ---------------------------------------------------------------------------
+# Windows Autopilot device identities.
+#
+# This is the second half of the device cache. A device that has been imported
+# into Autopilot has an Entra ID device record from the moment it is imported,
+# but it has NO deviceManagement/managedDevices entry until it actually enrols
+# - which is why searching for a brand new machine used to return nothing.
+#
+# No $select is used: the resource returns a small fixed field set, and asking
+# for a projection it does not support fails the whole call.
+# ---------------------------------------------------------------------------
+function Get-AutopilotDeviceCache {
+    $uri  = 'https://graph.microsoft.com/v1.0/deviceManagement/windowsAutopilotDeviceIdentities?$top=500'
+    $all  = New-Object System.Collections.Generic.List[object]
+    $page = 0
+
+    while ($uri) {
+        $page++
+        Set-Status "Loading Autopilot devices... page $page ($($all.Count) so far)"
+        $resp = Invoke-MgGraphRequest -Method GET -Uri $uri -OutputType PSObject
+
+        if (Test-GraphProperty $resp 'value') { $all.AddRange(@($resp.value)) }
+
+        $uri = if (Test-GraphProperty $resp '@odata.nextLink') { $resp.'@odata.nextLink' } else { $null }
+    }
+
+    foreach ($d in $all) {
+        $serial = [string](Get-AutopilotProperty $d 'serialNumber')
+
+        # displayName is usually empty until the device enrols, so fall back to
+        # the serial rather than putting a nameless row in the grid.
+        $name = [string](Get-AutopilotProperty $d 'displayName')
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = $serial }
+
+        # The Entra deviceId is what the group modules bind to. The property
+        # was renamed, so accept either spelling.
+        $entraId = [string](Get-AutopilotProperty $d 'azureAdDeviceId')
+        if (-not $entraId) { $entraId = [string](Get-AutopilotProperty $d 'azureActiveDirectoryDeviceId') }
+
+        $user = [string](Get-AutopilotProperty $d 'userPrincipalName')
+        if (-not $user) { $user = [string](Get-AutopilotProperty $d 'addressableUserName') }
+
+        [pscustomobject]@{
+            DeviceName      = $name
+            SerialNumber    = $serial
+            User            = $user
+            OS              = 'Windows'
+            OSVersion       = ''
+            Compliance      = ''
+            Ownership       = ''
+            Model           = [string](Get-AutopilotProperty $d 'model')
+            Manufacturer    = [string](Get-AutopilotProperty $d 'manufacturer')
+            Category        = ''
+            LastSync        = Format-AutopilotDate (Get-AutopilotProperty $d 'lastContactedDateTime' $null)
+            Enrolled        = ''
+            IntuneId        = [string](Get-AutopilotProperty $d 'managedDeviceId')
+            EntraDeviceId   = $entraId
+            Source          = 'Autopilot'
+            EnrollmentState = [string](Get-AutopilotProperty $d 'enrollmentState')
+            GroupTag        = [string](Get-AutopilotProperty $d 'groupTag')
         }
     }
 }
@@ -822,15 +907,60 @@ function Update-DeviceCache {
     if (-not (Test-Connected)) { return }
     Set-Busy $true
     try {
-        $Script:DeviceCache   = @(Get-ManagedDeviceCache)
+        $intune = @(Get-ManagedDeviceCache)
+
+        # A missing DeviceManagementServiceConfig.Read.All consent must not
+        # cost us the Intune half of the cache, so this half fails soft.
+        $autopilot = @()
+        $apNote    = ''
+        try { $autopilot = @(Get-AutopilotDeviceCache) }
+        catch { $apNote = " Autopilot lookup unavailable: $($_.Exception.Message)" }
+
+        # Serial number is the only identifier both sources always share, so it
+        # is the de-duplication key: once a device enrols it appears in both
+        # lists and the richer Intune row wins.
+        $known = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($d in $intune) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$d.SerialNumber)) {
+                [void]$known.Add([string]$d.SerialNumber)
+            }
+        }
+
+        $extra = @($autopilot | Where-Object {
+            (-not [string]::IsNullOrWhiteSpace([string]$_.SerialNumber)) -and
+            (-not $known.Contains([string]$_.SerialNumber))
+        })
+
+        $Script:DeviceCache   = @($intune) + @($extra)
         $Script:CacheLoadedAt = Get-Date
-        Set-Status "Device cache refreshed - $($Script:DeviceCache.Count) devices loaded at $($Script:CacheLoadedAt.ToString('HH:mm:ss'))."
+        Set-Status ("Device cache refreshed - $($Script:DeviceCache.Count) device(s): " +
+                    "$($intune.Count) from Intune, $($extra.Count) Autopilot-only " +
+                    "(not yet enrolled), at $($Script:CacheLoadedAt.ToString('HH:mm:ss')).$apNote")
     }
     catch {
         Set-Status "Cache refresh failed: $($_.Exception.Message)"
         [System.Windows.MessageBox]::Show($_.Exception.Message,'Cache refresh failed','OK','Error') | Out-Null
     }
     finally { Set-Busy $false }
+}
+
+# ---------------------------------------------------------------------------
+# Group actions bind to the Entra ID device record, so they work for an
+# Autopilot-only device - but only once that record exists. Anything that
+# needs an Intune managedDevice record is blocked for a non-enrolled device.
+# ---------------------------------------------------------------------------
+function Test-DeviceHasEntraRecord {
+    param($Device, [string]$Action)
+
+    $id = [string](Get-AutopilotProperty $Device 'EntraDeviceId')
+    if ([string]::IsNullOrWhiteSpace($id) -or $id -eq '00000000-0000-0000-0000-000000000000') {
+        [System.Windows.MessageBox]::Show(
+            "$($Device.DeviceName) has no Entra ID device record yet, so its group membership cannot be read or changed.`n`nAn Autopilot device gets its Entra record when it is imported. If this device was just imported, refresh the device cache and try again.",
+            $Action,'OK','Warning') | Out-Null
+        Set-Status "$Action - $($Device.DeviceName) has no Entra ID device record."
+        return $false
+    }
+    return $true
 }
 
 # ---------------------------------------------------------------------------
@@ -915,8 +1045,9 @@ $GridDevices.Add_SelectionChanged({
     $d = $GridDevices.SelectedItem
     if ($d) {
         $Script:SelectedDevice   = $d
-        $SelectedDeviceText.Text = "$($d.DeviceName)`nSerial: $($d.SerialNumber)`n$($d.User)"
-        Set-Status "Selected $($d.DeviceName)  |  Serial: $($d.SerialNumber)"
+        $extraLine = if ($d.Source -eq 'Autopilot') { "`nAutopilot - not enrolled in Intune ($($d.EnrollmentState))" } else { '' }
+        $SelectedDeviceText.Text = "$($d.DeviceName)`nSerial: $($d.SerialNumber)`n$($d.User)$extraLine"
+        Set-Status "Selected $($d.DeviceName)  |  Serial: $($d.SerialNumber)  |  Source: $($d.Source)"
     }
 })
 
@@ -924,7 +1055,7 @@ $BtnExportCsv.Add_Click({
     if ($Script:Results.Count -eq 0) { Set-Status 'Nothing to export.'; return }
     $dlg = New-Object System.Windows.Forms.SaveFileDialog
     $dlg.Filter   = 'CSV file (*.csv)|*.csv'
-    $dlg.FileName = "IntuneDevices_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
+    $dlg.FileName = "Devices_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         $Script:Results | Export-Csv -Path $dlg.FileName -NoTypeInformation -Encoding UTF8
         Set-Status "Exported $($Script:Results.Count) row(s) to $($dlg.FileName)"
@@ -941,6 +1072,8 @@ $BtnCopyGroups.Add_Click({
             'Copy Device Groups','OK','Warning') | Out-Null
         return
     }
+
+    if (-not (Test-DeviceHasEntraRecord -Device $Script:SelectedDevice -Action 'Copy Device Groups')) { return }
 
     if (-not (Get-Command -Name Show-CopyDeviceGroupsWindow -ErrorAction SilentlyContinue)) {
         [System.Windows.MessageBox]::Show(
@@ -971,6 +1104,8 @@ $BtnRemoveGroups.Add_Click({
             'Remove Device Groups','OK','Warning') | Out-Null
         return
     }
+
+    if (-not (Test-DeviceHasEntraRecord -Device $Script:SelectedDevice -Action 'Remove Device Groups')) { return }
 
     if (-not (Get-Command -Name Show-RemoveDeviceGroupsWindow -ErrorAction SilentlyContinue)) {
         [System.Windows.MessageBox]::Show(
