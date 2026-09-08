@@ -89,7 +89,7 @@ Location: `Modules\AppDependencyCheck\AppDependencyCheck.ps1`
 1. Download the toolkit ZIP from GitHub.
 2. Extract the ZIP to a folder on your computer.
 3. Review `Toolkit.ps1` and every PowerShell script in the `Modules` folder.
-4. Double-click `Run-Toolkit.bat`.
+4. Double-click `Run-Toolkit.bat`. Do not run as Admin. If unable to run, you can also run by opening a powershell Window as admin, and then running Toolkit.ps1 directly. 
 5. On first launch, allow the toolkit to install `Microsoft.Graph.Authentication` for the current user if prompted.
 6. Select **Connect to Graph** and complete the work or school account sign-in.
 
