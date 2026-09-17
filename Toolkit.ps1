@@ -25,6 +25,11 @@
         Management name of the selected device to one of six lifecycle
         statuses (In-Stock, Retired, Recycled, Stolen, Legalhold, Lost),
         with confirmation
+      - Modules can be switched on or off per environment from the MODULE
+        REGISTRY near the top of this file, or from an optional
+        ModuleConfig.psd1 dropped next to Toolkit.ps1. A module that is
+        switched off is not loaded, its button is hidden, and its Graph
+        scopes are not requested at sign-in.
       - Remaining Device Actions are stubbed with "Coming soon"
 
 .NOTES
@@ -90,30 +95,153 @@ if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
 Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
 
 # ---------------------------------------------------------------------------
-# Modules
+# MODULE REGISTRY  <<< TURN MODULES ON / OFF HERE >>>
 #
-# Each action lives in its own folder under Modules\.
-# Modules are resolved relative to the Toolkit.ps1 directory.
-# A missing module is not fatal - the matching button just reports it.
+# This is the ONLY place you need to edit to tailor the build to an
+# environment. Set Enabled = $false (or delete the whole entry) and the
+# module is not dot-sourced, its button disappears from the UI, and its
+# Graph scopes are not requested at sign-in.
 #
-# Each entry is a path relative to the toolkit root. The legacy flat layout
-# (module sitting next to Toolkit.ps1) is still probed as a fallback so a
-# partially migrated folder keeps working.
+# Key      - internal name, also used by Test-ModuleEnabled.
+# Enabled  - $true / $false. The master switch.
+# Path     - path to the module file, relative to the toolkit root.
+# Button   - x:Name of the button in the XAML that fires this module.
+# Scopes   - Graph permissions this module needs. Only merged in when the
+#            module is enabled, so a trimmed build asks for less consent.
+#
+# A missing file is not fatal - the matching button just reports it.
+# The legacy flat layout (module sitting next to Toolkit.ps1) is still
+# probed as a fallback so a partially migrated folder keeps working.
+# ---------------------------------------------------------------------------
+$Script:ModuleRegistry = @(
+    @{
+        Key     = 'CopyDeviceGroups'
+        Enabled = $true
+        Path    = 'Modules\CopyDeviceGroups\CopyDeviceGroups.ps1'
+        Button  = 'BtnCopyGroups'
+        Scopes  = @('Device.Read.All','Group.Read.All',
+                    'Group.ReadWrite.All','GroupMember.ReadWrite.All')
+    }
+    @{
+        Key     = 'RemoveDeviceGroups'
+        Enabled = $true
+        Path    = 'Modules\RemoveDeviceGroups\RemoveDeviceGroups.ps1'
+        Button  = 'BtnRemoveGroups'
+        Scopes  = @('Device.Read.All','Group.Read.All',
+                    'Group.ReadWrite.All','GroupMember.ReadWrite.All')
+    }
+    @{
+        Key     = 'BulkAddToGroup'
+        Enabled = $true
+        Path    = 'Modules\BulkAddToGroup\BulkAddToGroup.ps1'
+        Button  = 'BtnBulkAddGroup'
+        Scopes  = @('DeviceManagementManagedDevices.Read.All','Device.Read.All',
+                    'Group.Read.All','Group.ReadWrite.All','GroupMember.ReadWrite.All')
+    }
+    @{
+        Key     = 'AppDependencyCheck'
+        Enabled = $true
+        Path    = 'Modules\AppDependencyCheck\AppDependencyCheck.ps1'
+        Button  = 'BtnAppDependency'
+        Scopes  = @('DeviceManagementApps.Read.All')
+    }
+    @{
+        Key     = 'AssetStatus'
+        Enabled = $true
+        Path    = 'Modules\AssetStatus\AssetStatus.ps1'
+        Button  = 'BtnAssetStatus'
+        Scopes  = @('DeviceManagementManagedDevices.ReadWrite.All')
+    }
+)
+
+# ---------------------------------------------------------------------------
+# Optional per-machine override file.
+#
+# Drop a ModuleConfig.psd1 next to Toolkit.ps1 to change settings without
+# editing this script - handy when the same build is shared across sites:
+#
+#     @{
+#         Modules = @{ AppDependencyCheck = $false; BulkAddToGroup = $false }
+#         AssetStatusValues = @('In-Stock','Retired','Loaner')
+#     }
+#
+# Keys not named in the file keep the values set above.
+#
+# The older flat layout - module keys sitting at the top level, with no
+# Modules sub-table - is still honoured so existing files keep working.
 # ---------------------------------------------------------------------------
 $Script:ModuleRoot = $PSScriptRoot
 
-$Script:ModulesLoaded = @{}
+# Read by Modules\AssetStatus\AssetStatus.ps1 when it is dot-sourced below.
+# $null means 'not configured', which leaves the module's built-in list alone.
+# An empty or all-blank list is treated the same way.
+$Script:AssetStatusValues = $null
 
-foreach ($module in @('Modules\CopyDeviceGroups\CopyDeviceGroups.ps1',
-                      'Modules\RemoveDeviceGroups\RemoveDeviceGroups.ps1',
-                      'Modules\BulkAddToGroup\BulkAddToGroup.ps1',
-                      'Modules\AppDependencyCheck\AppDependencyCheck.ps1',
-                      'Modules\AssetStatus\AssetStatus.ps1')) {
-    $moduleName = Split-Path -Leaf $module
+$moduleConfigPath = Join-Path $Script:ModuleRoot 'ModuleConfig.psd1'
+if (Test-Path $moduleConfigPath) {
+    try {
+        $overrides = Import-PowerShellDataFile -Path $moduleConfigPath
+
+        # Prefer the Modules sub-table; fall back to the flat top-level form.
+        $moduleSwitches = $overrides
+        if ($overrides.ContainsKey('Modules') -and $overrides['Modules'] -is [hashtable]) {
+            $moduleSwitches = $overrides['Modules']
+        }
+
+        foreach ($entry in $Script:ModuleRegistry) {
+            if ($moduleSwitches.ContainsKey($entry.Key)) {
+                $entry.Enabled = [bool]$moduleSwitches[$entry.Key]
+            }
+        }
+
+        # Asset Status lifecycle labels. Trim blanks and drop duplicates so a
+        # stray comma or a repeated line cannot produce an empty or doubled
+        # drop-down entry.
+        if ($overrides.ContainsKey('AssetStatusValues')) {
+            $wanted = @($overrides['AssetStatusValues']) |
+                      ForEach-Object { [string]$_ } |
+                      Where-Object   { -not [string]::IsNullOrWhiteSpace($_) } |
+                      ForEach-Object { $_.Trim() }
+
+            $wanted = $wanted | Select-Object -Unique
+
+            if ($wanted.Count -gt 0) {
+                $Script:AssetStatusValues = @($wanted)
+            }
+            else {
+                [System.Windows.MessageBox]::Show(
+                    "AssetStatusValues in ModuleConfig.psd1 is empty, so the built-in statuses are being used.",
+                    'Module configuration','OK','Warning') | Out-Null
+            }
+        }
+    }
+    catch {
+        [System.Windows.MessageBox]::Show(
+            "ModuleConfig.psd1 could not be read, so the built-in settings are being used.`n`n$($_.Exception.Message)",
+            'Module configuration','OK','Warning') | Out-Null
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Load every enabled module.
+# ---------------------------------------------------------------------------
+$Script:ModulesLoaded  = @{}
+$Script:ModulesEnabled = @{}
+
+foreach ($entry in $Script:ModuleRegistry) {
+    $Script:ModulesEnabled[$entry.Key] = [bool]$entry.Enabled
+
+    # Switched off for this build - do not load it, do not touch the button yet.
+    if (-not $entry.Enabled) {
+        $Script:ModulesLoaded[$entry.Key] = $false
+        continue
+    }
+
+    $moduleName = Split-Path -Leaf $entry.Path
 
     # Preferred subfolder location, then the old flat location.
     $candidates = @(
-        (Join-Path $Script:ModuleRoot $module)
+        (Join-Path $Script:ModuleRoot $entry.Path)
         (Join-Path $Script:ModuleRoot $moduleName)
     )
     $modulePath = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
@@ -121,32 +249,47 @@ foreach ($module in @('Modules\CopyDeviceGroups\CopyDeviceGroups.ps1',
     if ($modulePath) {
         try {
             . $modulePath
-            $Script:ModulesLoaded[$moduleName] = $true
+            $Script:ModulesLoaded[$entry.Key] = $true
         }
         catch {
-            $Script:ModulesLoaded[$moduleName] = $false
+            $Script:ModulesLoaded[$entry.Key] = $false
             [System.Windows.MessageBox]::Show(
                 "Module '$moduleName' could not be loaded:`n`n$($_.Exception.Message)",
                 'Module load error','OK','Warning') | Out-Null
         }
     }
     else {
-        $Script:ModulesLoaded[$moduleName] = $false
+        $Script:ModulesLoaded[$entry.Key] = $false
     }
 }
 
-# Scopes needed now, plus headroom for the group actions coming next
+# Returns $true only when the module is switched on AND its file loaded.
+function Test-ModuleEnabled {
+    param([string]$Key)
+    return ($Script:ModulesEnabled.ContainsKey($Key) -and $Script:ModulesEnabled[$Key])
+}
+
+# ---------------------------------------------------------------------------
+# Graph scopes
+#
+# Base scopes cover the shell itself (search, cache, device details). Each
+# enabled module then contributes its own scopes, so a build with modules
+# switched off asks the tenant for less.
+# ---------------------------------------------------------------------------
 $Script:GraphScopes = @(
     'DeviceManagementManagedDevices.ReadWrite.All'
     'DeviceManagementConfiguration.Read.All'
     'Device.Read.All'
-    'Group.Read.All'
-    'Group.ReadWrite.All'
-    'GroupMember.ReadWrite.All'
     'User.Read.All'
-    'DeviceManagementApps.Read.All'
     'DeviceManagementServiceConfig.Read.All'
 )
+
+foreach ($entry in $Script:ModuleRegistry) {
+    if (-not $entry.Enabled) { continue }
+    foreach ($scope in $entry.Scopes) {
+        if ($Script:GraphScopes -notcontains $scope) { $Script:GraphScopes += $scope }
+    }
+}
 
 # ---------------------------------------------------------------------------
 # Embedded XAML
@@ -557,11 +700,11 @@ $XamlString = @'
                     </StackPanel>
 
                     <StackPanel Grid.Row="3" Margin="0,8,0,0">
-                        <Separator Background="{StaticResource SeparatorBrush}" Margin="0,0,0,12"/>
-                        <TextBlock Text="Bulk Actions" Style="{StaticResource CardHeader}" Margin="0,0,0,12"/>
+                        <Separator x:Name="SepBulkActions" Background="{StaticResource SeparatorBrush}" Margin="0,0,0,12"/>
+                        <TextBlock x:Name="HdrBulkActions" Text="Bulk Actions" Style="{StaticResource CardHeader}" Margin="0,0,0,12"/>
                         <Button x:Name="BtnBulkAddGroup" Style="{StaticResource ActionButton}" Content="Bulk Add to Group"/>
-                        <Separator Background="{StaticResource SeparatorBrush}" Margin="0,14,0,12"/>
-                        <TextBlock Text="Reporting" Style="{StaticResource CardHeader}" Margin="0,0,0,12"/>
+                        <Separator x:Name="SepReporting" Background="{StaticResource SeparatorBrush}" Margin="0,14,0,12"/>
+                        <TextBlock x:Name="HdrReporting" Text="Reporting" Style="{StaticResource CardHeader}" Margin="0,0,0,12"/>
                         <Button x:Name="BtnAppDependency" Style="{StaticResource ActionButton}"
                                 Content="App Dependency Check"
                                 ToolTip="Read-only. Lists every app that depends on a selected Win32 app, so you can see what breaks before changing it."/>
@@ -1082,6 +1225,12 @@ $BtnExportCsv.Add_Click({
 
 # --- Stubbed actions -------------------------------------------------------
 $BtnCopyGroups.Add_Click({
+    # Switched off in the module registry at the top of this script.
+    if (-not (Test-ModuleEnabled -Key 'CopyDeviceGroups')) {
+        Set-Status 'Copy Device Groups is switched off in this build.'
+        return
+    }
+
     if (-not (Test-Connected)) { return }
 
     if ($null -eq $Script:SelectedDevice) {
@@ -1114,6 +1263,12 @@ $BtnCopyGroups.Add_Click({
     }
 })
 $BtnRemoveGroups.Add_Click({
+    # Switched off in the module registry at the top of this script.
+    if (-not (Test-ModuleEnabled -Key 'RemoveDeviceGroups')) {
+        Set-Status 'Remove Device Groups is switched off in this build.'
+        return
+    }
+
     if (-not (Test-Connected)) { return }
 
     if ($null -eq $Script:SelectedDevice) {
@@ -1145,6 +1300,12 @@ $BtnRemoveGroups.Add_Click({
     }
 })
 $BtnBulkAddGroup.Add_Click({
+    # Switched off in the module registry at the top of this script.
+    if (-not (Test-ModuleEnabled -Key 'BulkAddToGroup')) {
+        Set-Status 'Bulk Add to Group is switched off in this build.'
+        return
+    }
+
     if (-not (Test-Connected)) { return }
 
     if (-not (Get-Command -Name Show-BulkAddToGroupWindow -ErrorAction SilentlyContinue)) {
@@ -1166,6 +1327,12 @@ $BtnBulkAddGroup.Add_Click({
     }
 })
 $BtnAppDependency.Add_Click({
+    # Switched off in the module registry at the top of this script.
+    if (-not (Test-ModuleEnabled -Key 'AppDependencyCheck')) {
+        Set-Status 'App Dependency Check is switched off in this build.'
+        return
+    }
+
     if (-not (Test-Connected)) { return }
 
     if (-not (Get-Command -Name Show-AppDependencyCheckWindow -ErrorAction SilentlyContinue)) {
@@ -1186,6 +1353,12 @@ $BtnAppDependency.Add_Click({
     }
 })
 $BtnAssetStatus.Add_Click({
+    # Switched off in the module registry at the top of this script.
+    if (-not (Test-ModuleEnabled -Key 'AssetStatus')) {
+        Set-Status 'Asset Status is switched off in this build.'
+        return
+    }
+
     if (-not (Test-Connected)) { return }
 
     if ($null -eq $Script:SelectedDevice) {
@@ -1266,6 +1439,60 @@ $timer.Add_Tick({ $ClockText.Text = (Get-Date).ToString('HH:mm:ss') })
 $timer.Start()
 
 $Window.Add_Closed({ $timer.Stop() })
+
+# ---------------------------------------------------------------------------
+# Apply the module registry to the UI.
+#
+# A module that is switched off has its button removed from the layout
+# (Collapsed, not just greyed out) so the panel closes up and the operator
+# is never shown an action this build cannot perform. A module that is
+# switched ON but whose file is missing stays visible but disabled, because
+# that is a deployment fault worth seeing rather than hiding.
+# ---------------------------------------------------------------------------
+function Update-ModuleUi {
+    foreach ($entry in $Script:ModuleRegistry) {
+        $btn = $Window.FindName($entry.Button)
+        if ($null -eq $btn) { continue }
+
+        if (-not $entry.Enabled) {
+            $btn.Visibility = [System.Windows.Visibility]::Collapsed
+            continue
+        }
+
+        $btn.Visibility = [System.Windows.Visibility]::Visible
+
+        if (-not $Script:ModulesLoaded[$entry.Key]) {
+            $btn.IsEnabled = $false
+            $btn.ToolTip   = "$($entry.Key) is enabled but its file was not found at '$($entry.Path)'."
+        }
+    }
+
+    # Hide a section header and its separator when every button under it is gone.
+    foreach ($section in @(
+        @{ Keys = @('BulkAddToGroup');     Header = 'HdrBulkActions'; Separator = 'SepBulkActions' }
+        @{ Keys = @('AppDependencyCheck'); Header = 'HdrReporting';   Separator = 'SepReporting'   }
+    )) {
+        $anyVisible = $false
+        foreach ($key in $section.Keys) {
+            if (Test-ModuleEnabled -Key $key) { $anyVisible = $true }
+        }
+        if (-not $anyVisible) {
+            foreach ($name in @($section.Header, $section.Separator)) {
+                $el = $Window.FindName($name)
+                if ($el) { $el.Visibility = [System.Windows.Visibility]::Collapsed }
+            }
+        }
+    }
+
+    $offCount = @($Script:ModuleRegistry | Where-Object { -not $_.Enabled }).Count
+    if ($offCount -gt 0) {
+        $names = ($Script:ModuleRegistry | Where-Object { -not $_.Enabled } |
+                  ForEach-Object { $_.Key }) -join ', '
+        Set-Status "Ready. $offCount module(s) switched off for this build: $names"
+    }
+}
+
+Update-ModuleUi
 
 # ---------------------------------------------------------------------------
 # Show
