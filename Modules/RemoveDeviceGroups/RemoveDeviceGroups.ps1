@@ -21,8 +21,8 @@
 
 .NOTES
     SELF-CONTAINED - the WPF XAML is embedded below, so RemoveDeviceGroups.xaml
-    is not required at runtime and this file can be compiled with PS2EXE
-    alongside Toolkit.ps1. Pass -XamlPath to load an external
+    is not required at runtime; embedded XAML is used by default
+    when launched from Toolkit.ps1. Pass -XamlPath to load an external
     RemoveDeviceGroups.xaml instead while iterating on the UI.
 
     Every function here is Rdg-prefixed on purpose. This module and
