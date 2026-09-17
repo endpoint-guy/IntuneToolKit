@@ -36,7 +36,7 @@ The release package includes a pre-built MSI. Running it installs the toolkit
 to:
 
 ```
-C:\Program Files (x86)\EndpointGuy\Intune Toolkit
+C:\Program Files\Endpoint Guy\Intune Toolkit
 ```
 
 Installing is optional. The toolkit is plain PowerShell and runs fine from any
@@ -395,5 +395,5 @@ special packaging step to get right - the MSI is only copying files into
 place. The free edition covers everything needed for a package like this.
 
 > Keep `ModuleConfig.psd1` editable after install if your users are expected
-> to change it themselves. Under `C:\Program Files (x86)` they will need
+> to change it themselves. Under `C:\Program Files` they will need
 > administrator rights to save an edit.
