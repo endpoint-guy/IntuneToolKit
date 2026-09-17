@@ -27,8 +27,8 @@
 
 .NOTES
     SELF-CONTAINED - the WPF XAML is embedded below, so BulkAddToGroup.xaml
-    is not required at runtime and this file can be compiled with PS2EXE
-    alongside Toolkit.ps1. Pass -XamlPath to load an external
+    is not required at runtime; embedded XAML is used by default
+    when launched from Toolkit.ps1. Pass -XamlPath to load an external
     BulkAddToGroup.xaml instead while iterating on the UI.
 
     Every function here is Bag-prefixed on purpose. This module,
@@ -1510,98 +1510,3 @@ if ($MyInvocation.InvocationName -ne '.') {
 
     Show-BulkAddToGroupWindow -XamlPath $XamlPath
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
