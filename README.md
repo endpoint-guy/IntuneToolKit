@@ -1,283 +1,399 @@
-# Endpoint-Guy Intune Toolkit
+# EndpointGuy Intune Toolkit
 
-Endpoint-Guy Intune Toolkit is a Windows PowerShell 5.1 and WPF application for Microsoft Intune and Microsoft Entra ID device administration through Microsoft Graph.
+A Windows PowerShell + WPF desktop app that puts the Intune and Entra ID jobs
+a device admin actually does every day behind a few buttons, instead of a
+portal tab, a console, and a half-remembered script.
 
-> **Recommended:** unblock the GitHub ZIP, then double-click `Run-Toolkit.bat`.
+Search for a device by name, serial number, or primary user, select it, and
+run an action against it. Devices that have been imported into Windows
+Autopilot but have not enrolled in Intune yet are included in the search, so a
+brand new machine can be found - and added to groups - before it ever enrols.
 
-## Table of contents
+Everything runs as the signed-in admin through Microsoft Graph. There is no
+service account, no stored credential, and no agent: the toolkit can only do
+what the person running it is already allowed to do.
 
+This project was built largely with the assistance of Claude Opus 5. The
+design decisions, testing, and the day-to-day admin experience behind it are
+mine; a lot of the code was written with AI help.
+
+<!-- Screenshot: main window with search results and the Device Actions panel. -->
+![EndpointGuy Intune Toolkit - main window](IntuneToolkit.png)
+
+## Contents
+
+- [Install MSI](#install-msi)
 - [Requirements](#requirements)
+- [Getting started](#getting-started)
 - [Modules](#modules)
-- [User instructions](#user-instructions)
-- [Microsoft Graph permissions](#microsoft-graph-permissions)
-- [Using the toolkit](#using-the-toolkit)
-- [Bulk-add CSV format](#bulk-add-csv-format)
-- [App dependency checks](#app-dependency-checks)
-- [Asset statuses](#asset-statuses)
-- [Group eligibility](#group-eligibility)
-- [Repository structure](#repository-structure)
-- [Diagnostics and safety](#diagnostics-and-safety)
-- [Development notes](#development-notes)
-- [Acknowledgments](#acknowledgments)
+- [Configuration](#configuration)
+- [Graph permissions](#graph-permissions)
+- [Package your own MSI](#package-your-own-msi)
+
+## Install MSI
+
+The release package includes a pre-built MSI. Running it installs the toolkit
+to:
+
+```
+C:\Program Files (x86)\EndpointGuy\Intune Toolkit
+```
+
+Installing is optional. The toolkit is plain PowerShell and runs fine from any
+folder without being installed at all - unzip the package and launch it
+directly with either:
+
+- **`Run-Toolkit.bat`** - double-click it. This is the easier option, and the
+  one to use if PowerShell scripts do not normally run on your machine.
+- **`Toolkit.ps1`** - run it from a PowerShell prompt if you would rather
+  launch it yourself or pass parameters.
+
+Both start the same application. Use whichever suits how the machine is
+managed.
 
 ## Requirements
 
-- Windows 10 or Windows 11
-- Windows PowerShell 5.1
-- Network access to the PowerShell Gallery for first-time setup
-- Network access to Microsoft Graph
-- Appropriate Microsoft Intune and Entra roles
+| | |
+|---|---|
+| Operating system | Windows 10 or Windows 11 |
+| PowerShell | Windows PowerShell 5.1 (ships with Windows - nothing to install) |
+| PowerShell module | `Microsoft.Graph.Authentication` - installed automatically on first launch |
+| Account | An Entra ID account with the Intune rights for the actions you intend to use |
+| Network | Access to Microsoft Graph, plus the PowerShell Gallery on first launch only |
 
-The toolkit automatically installs `Microsoft.Graph.Authentication` for the current user if it is missing.
+No local administrator rights are needed to run the toolkit. The Graph module
+is installed for the current user only. Installing the MSI does require admin
+rights, as it writes to Program Files - running from a folder does not.
+
+### About the Graph module
+
+On first launch the toolkit checks for `Microsoft.Graph.Authentication` and, if
+it is missing, installs it for the current user. This step needs to reach the
+PowerShell Gallery and can take a few minutes. Every later launch is offline
+for this purpose and starts immediately.
+
+If the Gallery is blocked on your network, install the module yourself from a
+machine that can reach it:
+
+```powershell
+Install-Module Microsoft.Graph.Authentication -Scope CurrentUser
+```
+
+### Why STA mode matters
+
+The interface is WPF, which requires PowerShell to run in single-threaded
+apartment mode. `Run-Toolkit.bat` already passes the right switches. If you
+launch the script yourself, include `-STA` or the window will not open:
+
+```powershell
+powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\Toolkit.ps1
+```
+
+## Getting started
+
+### 1. Launch the toolkit
+
+Start it from the Start menu shortcut if you installed the MSI, or by
+double-clicking `Run-Toolkit.bat` in the program folder.
+
+The first launch may pause for a few minutes while the Graph authentication
+module is installed. Later launches open straight away.
+
+### 2. Connect to Graph
+
+Select **Connect to Graph** in the top right. Your browser opens the standard
+Microsoft sign-in prompt, and the first time you connect you will be asked to
+consent to the permissions the toolkit needs.
+
+The indicator beside the button shows where you stand:
+
+| Indicator | Meaning |
+|---|---|
+| **Not connected** (red) | Sign in before doing anything else |
+| **Connected** (green) | Shows the signed-in account; the button becomes **Reconnect** |
+
+Nothing is cached between sessions - you sign in each time the toolkit starts.
+
+### 3. Find a device
+
+Pick what you are searching by - **Device Name**, **Serial Number**, or
+**Primary Username** - type your text, and select **Search** or press Enter.
+
+Searches match on *contains* by default, so a partial name is enough. Tick
+**Exact match only** to narrow it to a precise match.
+
+Results cover Intune managed devices and devices imported into Windows
+Autopilot that have not enrolled yet, so a new machine can be found before it
+is ever handed to anyone.
+
+Results are cached, so searching again is instant. Select **Refresh cache** if
+a device has changed in Intune and you need current data. **Export to CSV**
+saves whatever is on screen.
+
+### 4. Run an action
+
+Select a device in the results grid, then choose an action from the panel on
+the left. The device you picked is carried into the action window.
+
+Anything that writes asks you to confirm first, and the prompt defaults to No.
+Each action reports its result per item, so you can see exactly what happened.
+
+> Only the actions enabled in this build appear. See
+> [Configuration](#configuration) to switch modules on or off.
 
 ## Modules
 
-The toolkit consists of a core application plus optional action modules. The main application remains useful even when one or more module folders are not present; missing modules disable only their corresponding actions.
+Every action is a self-contained module. Any of them can be switched off if
+your environment does not need it - a module that is off is not loaded, its
+button does not appear, and its Graph permissions are not requested at
+sign-in. See [Configuration](#configuration) for how to turn modules on and
+off.
 
-### Core toolkit — no action modules required
+In the toolkit the modules are grouped as **Device Actions**, **Bulk
+Actions**, and **Reporting**.
 
-Without the attached action modules, `Toolkit.ps1` can still:
+### Device Actions
 
-- Connect interactively to Microsoft Graph and display the connected account.
-- Load and cache the Intune managed-device inventory.
-- Search devices by device name, serial number, or primary username.
-- Use contains matching or **Exact match only**.
-- Display device name, serial number, management name, user, operating system, OS version, compliance, ownership, model, and last sync.
-- Refresh the local device cache.
-- Select and review a managed device.
-- Export the current search results to a UTF-8 CSV file.
+These act on the single device selected in the search results.
 
-### Copy Device Groups module
+#### Copy Device Groups
 
-Location: `Modules\CopyDeviceGroups\CopyDeviceGroups.ps1`
+Copies assigned security group memberships from the selected device to
+another device. You search for and pick the target device, then review every
+group the source device belongs to before anything is written.
 
-- Copies eligible assigned security-group memberships from a selected source device to a target device.
-- Shows eligible and ineligible memberships before writing.
-- Preselects eligible groups and requires confirmation.
-- Reports **Added**, **Already a member**, or **Failed** for each group.
+Only assigned (static) groups can be copied. Dynamic groups are listed but
+cannot be selected, because their membership is worked out by rule and cannot
+be written to directly. Groups are added one at a time and each result is
+reported.
 
-### Remove Device Groups module
+#### Remove Device Groups
 
-Location: `Modules\RemoveDeviceGroups\RemoveDeviceGroups.ps1`
+Removes the selected device from the assigned security groups it belongs to.
+Every eligible group is ticked by default, so the common case - strip this
+machine out of everything - is one click. Dynamic groups are shown but cannot
+be selected.
 
-- Removes the selected device from eligible assigned security groups.
-- Preselects eligible memberships while leaving ineligible memberships read-only.
-- Uses a confirmation prompt that defaults to **No**.
-- Reports **Removed**, **Not a member**, or **Failed** for each group.
+A confirmation naming the device and the group count is shown first, and it
+defaults to No. Each removal is written back into the grid as it happens.
 
-### Bulk Add to Group module
+#### Update Asset Status
 
-Location: `Modules\BulkAddToGroup\BulkAddToGroup.ps1`
+This one is a deliberately specific use case. My organisation uses the Intune
+Management name as the place where an asset's lifecycle status lives, so a
+device reads as `Active`, `In-Stock`, `Retired` and so on at a glance in the
+console. This module sets that value on the selected device from a drop-down,
+rather than leaving people to type it by hand and spell it three different
+ways.
 
-- Reads device names from the first CSV column.
-- Reads every nonblank line, including line 1, and ignores duplicate names.
-- Shows matched, unmatched, and ambiguous names before writing.
-- Adds matched devices to one eligible assigned security group.
-- Uses a confirmation prompt that defaults to **No** and supports result export.
+If your organisation does not use the Management name this way, this is the
+module to turn off first.
 
-### App Dependency Check module
+The status options are not fixed - they are defined in `ModuleConfig.psd1`,
+so you can set them to whatever your organisation uses. See
+[Configuration](#configuration) for details.
 
-Location: `Modules\AppDependencyCheck\AppDependencyCheck.ps1`
+The current Management name is read from Graph when the window opens, and the
+resulting name is shown before the write. The confirmation names the device,
+the old name and the new name, and defaults to No.
 
-- Lists every app that depends on a selected Win32 app, directly or indirectly.
-- Shows the relationship type, depth, install behaviour, and the full chain.
-- Read-only: issues only GET requests and never writes to Intune.
-- Lists every Win32 app A-Z in a drop-down.
-- Exports the list to CSV.
+> **The Management name is a label only.** Changing it does not retire, wipe
+> or unenrol the device, and it leaves the device name, serial number, group
+> memberships and assignments untouched.
 
-### Asset Status module
+### Bulk Actions
 
-Location: `Modules\AssetStatus\AssetStatus.ps1`
+#### Bulk Add to Group
 
-- Sets the Intune Management name of the selected device to one of six lifecycle statuses: **In-Stock**, **Retired**, **Recycled**, **Stolen**, **Legalhold**, or **Lost**.
-- Replaces the Management name entirely with the chosen status word.
-- Shows the current Management name and a preview of the result before writing.
-- Uses a confirmation prompt that names the device, shows the old and new name, and defaults to **No**.
-- Acts on one device at a time and requires a device that has enrolled in Intune.
-- Re-reads the device from Graph after a write so the window shows what Intune actually holds.
+Adds many devices, listed in a CSV, to one security group. Device names are
+read from the first column of the file and matched against Intune, and every
+name is listed with its match state - so a typo or a decommissioned machine is
+visible before anything is written. Only rows that matched exactly one device
+are ticked.
 
-## User instructions
+You then search for and pick the target group. A confirmation naming the group
+and the device count is shown first, and it defaults to No. Results can be
+exported to CSV.
 
-1. Download the toolkit ZIP from GitHub.
-2. Extract the ZIP to a folder on your computer.
-3. Review `Toolkit.ps1` and every PowerShell script in the `Modules` folder.
-4. Double-click `Run-Toolkit.bat`.
-5. On first launch, allow the toolkit to install `Microsoft.Graph.Authentication` for the current user if prompted.
-6. Select **Connect to Graph** and complete the work or school account sign-in.
+### Reporting
 
-> **Production-use disclaimer:** Review and understand all included PowerShell scripts yourself before running this toolkit in a production environment. Confirm that the requested Microsoft Graph permissions, device actions, group operations, and automatic module installation meet your organization’s security, change-management, and compliance requirements.
+#### App Dependency Check
 
-`Run-Toolkit.bat` starts `Toolkit.ps1` in Windows PowerShell 5.1 with STA enabled and a process-only execution-policy bypass. It does not permanently change the user or computer execution policy.
+Answers one question: which apps depend on the app I am about to change?
 
-## Microsoft Graph permissions
+Picking a Win32 app and selecting **Find dependents** walks the relationship
+graph upwards and lists every app that would be affected if that app were
+changed, replaced or removed. Both direct dependents and indirect ones reached
+through another app are listed, with the full chain shown. The list can be
+exported to CSV.
 
-| Scope | Purpose |
-|---|---|
-| `DeviceManagementManagedDevices.ReadWrite.All` | Read and administer managed-device data. |
-| `DeviceManagementConfiguration.Read.All` | Read Intune configuration data. |
-| `Device.Read.All` | Resolve Entra device objects. |
-| `Group.Read.All` | Read groups and memberships. |
-| `Group.ReadWrite.All` | Support membership operations. |
-| `GroupMember.ReadWrite.All` | Add and remove members. |
-| `User.Read.All` | Read associated user information. |
-| `DeviceManagementApps.Read.All` | Read Win32 app and relationship data. |
+> **Read-only.** Every Graph call this module makes is a GET, so it is safe to
+> run against production at any time.
 
-> Tenant policy can require administrator consent and suitable administrative roles.
+## Configuration
 
-## Using the toolkit
+Everything configurable lives in a single optional file, `ModuleConfig.psd1`,
+sitting next to `Toolkit.ps1`. It overrides the settings baked into the
+script, so the same build can go to every site with only this one file
+changing.
 
-### Connect and search
+The file is optional. Delete it and the toolkit runs on its built-in
+defaults - all five modules on, and the six built-in asset statuses. Any key
+you omit falls back the same way, so the file only needs to contain what you
+actually want to change.
 
-1. Launch the toolkit.
-2. Select **Connect to Graph**.
-3. Complete sign-in.
-4. Choose a search field and enter a term.
-5. Select **Exact match only** if needed.
-6. Search and select a result.
+```powershell
+@{
+    Modules = @{
+        CopyDeviceGroups   = $true
+        RemoveDeviceGroups = $true
+        AssetStatus        = $true
+        BulkAddToGroup     = $true
+        AppDependencyCheck = $true
+    }
 
-### Copy groups
-
-1. Select the source device.
-2. Select **Copy Device Groups**.
-3. Choose the target.
-4. Review eligible groups.
-5. Confirm and review results.
-
-### Remove groups
-
-1. Select the device.
-2. Select **Remove Device Groups**.
-3. Adjust the selected memberships.
-4. Confirm and review results.
-
-### Bulk add
-
-1. Select **Bulk Add to Group**.
-2. Browse to the CSV.
-3. Review matches.
-4. Choose an eligible destination group.
-5. Confirm and review or export results.
-
-### App dependency check
-
-1. Select **App Dependency Check**.
-2. Pick the app you are about to change from the drop-down.
-3. Select **Find dependents**.
-4. Review the dependent apps and export the list if needed.
-
-### Update asset status
-
-1. Select the device in the search results.
-2. Select **Update Asset Status**.
-3. Review the current Management name shown for the device.
-4. Pick one of the six statuses from the drop-down and check the preview.
-5. Select **Update Management name**, then confirm at the prompt.
-
-## Bulk-add CSV format
-
-Every nonblank line—including line 1—is data. The first column supplies the device name.
-
-```csv
-LAPTOP-001
-LAPTOP-002
-KIOSK-014
+    AssetStatusValues = @(
+        'In-Stock'
+        'Retired'
+        'Recycled'
+        'Stolen'
+        'Legalhold'
+        'Lost'
+    )
+}
 ```
 
-- Do not include a header unless it should appear as an unmatched device.
-- Extra columns are ignored.
-- Duplicate names are ignored case-insensitively.
-- A selectable row must match exactly one managed device with an Entra device object.
+> Changes are read at startup, so restart the toolkit for them to take effect.
 
-## App dependency checks
+### Turning modules on and off
 
-The App Dependency Check module is read-only. It issues only GET requests and never modifies apps, relationships, or assignments.
+Set a module to `$false` and three things happen: it is not loaded, its
+button does not appear in the window, and its Graph permissions are not
+requested at sign-in.
 
-It answers one question: **which apps depend on this one?** Pick an app and the module walks the relationship graph upwards, listing every app that would be affected if it were changed, replaced, or removed.
+That last point is the useful one. A trimmed build asks for less consent, so
+if you have no need for the group modules, switching them off means the
+toolkit never asks for group write permissions at all.
 
-| Column | Meaning |
-|---|---|
-| Dependent app | The app that depends on the selected app. |
-| Relationship | `Dependency` or `Supersedence`. |
-| Level | `Direct` for a first-level dependent, `Indirect (n)` when reached through another app. |
-| Install | The Intune dependency behaviour: `autoInstall` or `detect`. |
-| Assigned | Whether the dependent app is assigned to any group. |
-| Chain | The full path from the selected app up to the dependent. |
+The key names are fixed - they must match exactly, as below. A key that is
+misspelled is ignored silently rather than reported, so the module simply
+keeps whatever the script already had.
 
-Each app is reached by its shortest chain, so an app that is both a direct and an indirect dependent is reported as `Direct`. Supersedence is included by default and can be excluded. The list can be exported to CSV.
+| Key | Button | Section |
+| --- | --- | --- |
+| `CopyDeviceGroups` | Copy Device Groups | Device Actions |
+| `RemoveDeviceGroups` | Remove Device Groups | Device Actions |
+| `AssetStatus` | Update Asset Status | Device Actions |
+| `BulkAddToGroup` | Bulk Add to Group | Bulk Actions |
+| `AppDependencyCheck` | App Dependency Check | Reporting |
 
-## Asset statuses
+### Asset status values
 
-The Asset Status module writes one of six fixed lifecycle statuses to the Intune **Management name** (`managedDeviceName`) of the selected device. The status word replaces the Management name entirely.
+`AssetStatusValues` sets the statuses offered by the
+[Update Asset Status](#update-asset-status) module. Whatever you list becomes
+the drop-down, in the order you list it:
 
-| Status | Typical use |
-|---|---|
-| `In-Stock` | Held in stock and awaiting assignment. |
-| `Retired` | Withdrawn from service. |
-| `Recycled` | Sent for disposal or recycling. |
-| `Stolen` | Reported stolen. |
-| `Legalhold` | Retained for legal or investigative reasons. |
-| `Lost` | Reported lost. |
-
-Only these six values can be written; the status is chosen from a drop-down and free text is not accepted.
-
-The Management name is a label only. Changing it does **not** change the device name, serial number, group memberships, or assignments, and it does **not** retire, wipe, or unenroll the device. Intune keeps no history of the previous Management name, so the old value cannot be restored from the toolkit — the confirmation prompt shows both the old and new name and defaults to **No**.
-
-A device must be enrolled in Intune to have a Management name. A device that has been imported into Autopilot but has not yet enrolled has no `managedDevice` record, so the action reports this and stops.
-
-## Group eligibility
-
-Only assigned, cloud-managed security groups are writable. Dynamic, rule-driven, Microsoft 365, mail-enabled, distribution, synchronized, and non-security groups are read-only.
-
-## Repository structure
-
-```text
-.
-├── Run-Toolkit.bat
-├── Toolkit.ps1
-├── MainWindow.xaml
-└── Modules
-    ├── CopyDeviceGroups
-    │   ├── CopyDeviceGroups.ps1
-    │   └── CopyDeviceGroups.xaml
-    ├── RemoveDeviceGroups
-    │   ├── RemoveDeviceGroups.ps1
-    │   └── RemoveDeviceGroups.xaml
-    ├── BulkAddToGroup
-    │   ├── BulkAddToGroup.ps1
-    │   └── BulkAddToGroup.xaml
-    ├── AppDependencyCheck
-    │   ├── AppDependencyCheck.ps1
-    │   └── AppDependencyCheck.xaml
-    └── AssetStatus
-        ├── AssetStatus.ps1
-        └── AssetStatus.xaml
+```powershell
+AssetStatusValues = @(
+    'Active'
+    'In-Stock'
+    'Retired'
+)
 ```
 
-PowerShell files contain embedded XAML for runtime use. External XAML supports UI development through `-XamlPath`.
+The same list is also the approved list. A value that is not on it is refused
+before anything is written, so the drop-down and the validation can never
+drift apart. Remove the key entirely, or leave the list empty, to fall back to
+the six built-in statuses.
 
-## Diagnostics and safety
+Each entry is written verbatim into the Intune Management name, so type it
+exactly as you want it to read in the console - `In-Stock` and `In Stock` are
+two different labels. Blank entries and duplicates are dropped automatically.
 
-- Detailed diagnostics and Graph error information.
-- Searches and previews do not change memberships.
-- Ineligible rows cannot be selected.
-- High-impact operations require confirmation.
-- Writes occur one item at a time.
-- Graph paging follows `@odata.nextLink`.
-- App Dependency Check is read-only and issues only GET requests.
-- Asset Status replaces only the Management name and never retires, wipes, or unenrolls a device.
+### If the file cannot be read
 
-## Development notes
+A malformed `ModuleConfig.psd1` does not stop the toolkit. It reports the
+problem and carries on with the built-in settings, so a stray comma cannot
+leave anyone unable to work.
 
-- Module functions use `Cdg`, `Rdg`, `Bag`, `Adc`, and `Ast` prefixes.
-- Grid rows implement `INotifyPropertyChanged`.
-- Intune and Entra device records are resolved separately.
-- Keep embedded and external XAML synchronized.
-- Bulk Add reads line 1 as data.
+An earlier layout listed the module keys at the top level, without the
+`Modules` wrapper. That form still works, so an existing file does not need
+rewriting.
 
-## Acknowledgments
+## Graph permissions
 
-Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. Claude supported development, documentation, troubleshooting, and code review. Project decisions and responsibility remain with the project author.
+The toolkit signs in as you, using delegated permissions. It never holds a
+client secret or a certificate, and it can only ever do what your own account
+is already allowed to do in Intune - the Graph scopes below simply let the
+toolkit act on your behalf, they do not grant you anything new.
 
-## Disclaimer
+The first sign-in shows a consent prompt listing these permissions. If your
+tenant requires admin consent for them, that prompt appears instead and the
+request goes to an administrator.
 
-Review every included PowerShell script before use, especially before running the toolkit in production. You are responsible for validating its behavior, permissions, security impact, exported data, and suitability for your environment.
+### Always requested
+
+These cover the shell itself - device search, the local cache and the details
+shown in the results grid.
+
+| Scope | Why |
+| --- | --- |
+| `DeviceManagementManagedDevices.ReadWrite.All` | Read Intune devices, and set the Management name |
+| `DeviceManagementConfiguration.Read.All` | Read configuration data |
+| `Device.Read.All` | Read the Entra device records behind each machine |
+| `User.Read.All` | Resolve primary users for search and display |
+| `DeviceManagementServiceConfig.Read.All` | Read Autopilot records, so imported but not yet enrolled devices appear |
+
+### Requested per module
+
+Each enabled module adds its own scopes on top. A module that is switched off
+contributes nothing, so a trimmed build asks the tenant for less - see
+[Configuration](#configuration).
+
+| Module | Additional scopes |
+| --- | --- |
+| Copy Device Groups | `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All` |
+| Remove Device Groups | `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All` |
+| Bulk Add to Group | `DeviceManagementManagedDevices.Read.All`, `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All` |
+| App Dependency Check | `DeviceManagementApps.Read.All` |
+| Update Asset Status | `DeviceManagementManagedDevices.ReadWrite.All` |
+
+Duplicates are merged, so a scope already in the base list is not requested
+twice.
+
+### Trimming what is requested
+
+The group modules are the ones that pull in write access to groups. If you do
+not need them, switching them off in `ModuleConfig.psd1` means
+`Group.ReadWrite.All` and `GroupMember.ReadWrite.All` are never asked for at
+all.
+
+At the other end, a build with only App Dependency Check enabled is read-only
+apart from the base scopes, since every call that module makes is a GET.
+
+## Package your own MSI
+
+The MSI shipped with the release was built with the free edition of
+[Advanced Installer](https://www.advancedinstaller.com/). If you fork the
+toolkit, change the defaults in `ModuleConfig.psd1` or strip out modules you
+do not want, you can repackage it the same way and hand your own MSI to your
+users.
+
+The broad strokes:
+
+1. Install Advanced Installer and start a new **Simple** installer project.
+2. Point it at your toolkit folder so the whole thing - `Toolkit.ps1`,
+   `Run-Toolkit.bat`, `Intune Toolkit.lnk`, `ModuleConfig.psd1` and the
+   `Modules\` tree - is included, keeping the folder structure intact.
+3. Set the install location, and use the packaged `Intune Toolkit.lnk` for
+   any Start menu or desktop shortcut rather than pointing at the .bat.
+4. Build. The result is a single MSI you can deploy however you normally
+   deploy software.
+
+Nothing about the toolkit depends on being installed this way, so there is no
+special packaging step to get right - the MSI is only copying files into
+place. The free edition covers everything needed for a package like this.
+
+> Keep `ModuleConfig.psd1` editable after install if your users are expected
+> to change it themselves. Under `C:\Program Files (x86)` they will need
+> administrator rights to save an edit.
