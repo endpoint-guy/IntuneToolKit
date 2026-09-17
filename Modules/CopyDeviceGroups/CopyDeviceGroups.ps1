@@ -18,8 +18,8 @@
 
 .NOTES
     SELF-CONTAINED - the WPF XAML is embedded below, so CopyDeviceGroups.xaml
-    is not required at runtime and this file can be compiled with PS2EXE
-    alongside Toolkit.ps1. Pass -XamlPath to load an external
+    is not required at runtime; embedded XAML is used by default
+    when launched from Toolkit.ps1. Pass -XamlPath to load an external
     CopyDeviceGroups.xaml instead while iterating on the UI.
 
     Dot-source it from Toolkit.ps1, then call the entry point:
