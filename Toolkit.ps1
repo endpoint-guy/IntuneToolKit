@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    Endpointguy Intune Toolkit - WPF front end for Microsoft Graph / Intune administration.
+    EndpointGuy Intune Toolkit - WPF front end for Microsoft Graph / Intune administration.
 
 .DESCRIPTION
     Phase 1 build:
@@ -21,6 +21,10 @@
         report listing every app that depends on a selected Win32 app,
         directly or indirectly, so the blast radius of changing or
         removing it is visible before the change is made
+      - Asset Status module (Modules\AssetStatus) - sets the Intune
+        Management name of the selected device to one of six lifecycle
+        statuses (In-Stock, Retired, Recycled, Stolen, Legalhold, Lost),
+        with confirmation
       - Remaining Device Actions are stubbed with "Coming soon"
 
 .NOTES
@@ -103,7 +107,8 @@ $Script:ModulesLoaded = @{}
 foreach ($module in @('Modules\CopyDeviceGroups\CopyDeviceGroups.ps1',
                       'Modules\RemoveDeviceGroups\RemoveDeviceGroups.ps1',
                       'Modules\BulkAddToGroup\BulkAddToGroup.ps1',
-                      'Modules\AppDependencyCheck\AppDependencyCheck.ps1')) {
+                      'Modules\AppDependencyCheck\AppDependencyCheck.ps1',
+                      'Modules\AssetStatus\AssetStatus.ps1')) {
     $moduleName = Split-Path -Leaf $module
 
     # Preferred subfolder location, then the old flat location.
@@ -149,7 +154,7 @@ $Script:GraphScopes = @(
 $XamlString = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Endpointguy Intune Toolkit"
+        Title="EndpointGuy Intune Toolkit"
         Height="1000" Width="1600"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBrush}"
@@ -463,20 +468,27 @@ $XamlString = @'
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                    <TextBlock Text="Endpointguy Intune Toolkit"
-                               FontSize="24" FontWeight="Bold"
-                               Foreground="{StaticResource TitleTextBrush}"/>
-                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                        <TextBlock Text="Device lookup and Intune administration tools"
-                                   Foreground="{StaticResource SubtleTextBrush}" FontSize="13"/>
-                        <TextBlock Text="  &#8226;  " Foreground="{StaticResource BulletBrush}" FontSize="13"/>
-                        <TextBlock x:Name="LinkSite" Text="endpointguy.com"
-                                   Foreground="{StaticResource AccentTextBrush}" FontSize="13"
-                                   Cursor="Hand"/>
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image x:Name="LogoImage" Height="40" Margin="0,0,14,0"
+                           VerticalAlignment="Center" Stretch="Uniform"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="EndpointGuy Intune Toolkit"
+                                   FontSize="24" FontWeight="Bold"
+                                   Foreground="{StaticResource TitleTextBrush}"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                            <TextBlock Text="Device lookup and Intune administration tools"
+                                       Foreground="{StaticResource SubtleTextBrush}" FontSize="13"/>
+                            <TextBlock Margin="10,0,0,0" FontSize="13">
+                                <Hyperlink x:Name="LnkSite"
+                                           NavigateUri="https://endpointguy.com"
+                                           Foreground="{StaticResource AccentTextBrush}"
+                                           TextDecorations="Underline"
+                                           ToolTip="https://endpointguy.com">endpointguy.com</Hyperlink>
+                            </TextBlock>
+                        </StackPanel>
                     </StackPanel>
                 </StackPanel>
-
                 <Button x:Name="BtnConnect" Grid.Column="1"
                         Style="{StaticResource GreenButton}"
                         Content="Connect to Graph"
@@ -539,6 +551,9 @@ $XamlString = @'
                         <Button x:Name="BtnRemoveGroups" Style="{StaticResource ActionButton}"
                                 Content="Remove Device Groups"
                                 ToolTip="Remove the selected device from its assigned security groups. Asks for confirmation first."/>
+                        <Button x:Name="BtnAssetStatus"  Style="{StaticResource ActionButton}"
+                                Content="Update Asset Status"
+                                ToolTip="Set the Intune Management name of the selected device to In-Stock, Retired, Recycled, Stolen, Legalhold or Lost. Asks for confirmation first."/>
                     </StackPanel>
 
                     <StackPanel Grid.Row="3" Margin="0,8,0,0">
@@ -582,7 +597,7 @@ $XamlString = @'
                             <CheckBox x:Name="ChkExact" Content="Exact match only"
                                       VerticalAlignment="Center" FontSize="13" Margin="18,0,0,0"/>
                             <Button x:Name="BtnRefreshCache" Style="{StaticResource NeutralButton}"
-                                    Content="Refresh Device Cache" Height="32" Margin="18,0,0,0"/>
+                                    Content="Refresh Device Cache" MinHeight="32" Padding="14,6" VerticalAlignment="Center" Margin="18,0,0,0"/>
                         </StackPanel>
                     </StackPanel>
                 </Border>
@@ -625,6 +640,7 @@ $XamlString = @'
                                 <DataGridTextColumn Header="Source"        Binding="{Binding Source}"       Width="95"/>
                                 <DataGridTextColumn Header="Device Name"   Binding="{Binding DeviceName}"   Width="200"/>
                                 <DataGridTextColumn Header="Serial Number" Binding="{Binding SerialNumber}" Width="140"/>
+                                <DataGridTextColumn Header="Management Name" Binding="{Binding ManagementName}" Width="200"/>
                                 <DataGridTextColumn Header="User"          Binding="{Binding User}"         Width="220"/>
                                 <DataGridTextColumn Header="OS"            Binding="{Binding OS}"           Width="100"/>
                                 <DataGridTextColumn Header="OS Version"    Binding="{Binding OSVersion}"    Width="130"/>
@@ -698,8 +714,8 @@ if ($namesFound -eq 0) {
 foreach ($required in @('BtnConnect','BtnSearch','BtnRefreshCache','GridDevices',
                         'TxtSearch','CmbSearchField','ChkExact','StatusText',
                         'ConnIcon','ConnStatus','ConnAccount','ResultCount',
-                        'SelectedDeviceText','ClockText','BtnExportCsv','LinkSite',
-                        'BtnCopyGroups','BtnRemoveGroups',
+                        'SelectedDeviceText','ClockText','BtnExportCsv',
+                        'BtnCopyGroups','BtnRemoveGroups','BtnAssetStatus',
                         'BtnBulkAddGroup','BtnAppDependency')) {
     if (-not (Get-Variable -Name $required -Scope Script -ErrorAction SilentlyContinue)) {
         [System.Windows.MessageBox]::Show(
@@ -730,7 +746,7 @@ function Set-Status {
 function Show-ComingSoon {
     param([string]$Feature)
     [System.Windows.MessageBox]::Show("$Feature`n`nComing soon.",
-        'Endpointguy Intune Toolkit','OK','Information') | Out-Null
+        'EndpointGuy Intune Toolkit','OK','Information') | Out-Null
     Set-Status "$Feature - coming soon."
 }
 
@@ -785,7 +801,7 @@ function Test-Connected {
 # Device cache
 # ---------------------------------------------------------------------------
 function Get-ManagedDeviceCache {
-    $select = 'id,deviceName,serialNumber,userPrincipalName,operatingSystem,' +
+    $select = 'id,deviceName,managedDeviceName,serialNumber,userPrincipalName,operatingSystem,' +
               'osVersion,complianceState,managedDeviceOwnerType,model,manufacturer,' +
               'lastSyncDateTime,enrolledDateTime,azureADDeviceId,deviceCategoryDisplayName'
 
@@ -807,6 +823,7 @@ function Get-ManagedDeviceCache {
         [pscustomobject]@{
             DeviceName    = $d.deviceName
             SerialNumber  = $d.serialNumber
+            ManagementName = $d.managedDeviceName
             User          = $d.userPrincipalName
             OS            = $d.operatingSystem
             OSVersion     = $d.osVersion
@@ -884,6 +901,7 @@ function Get-AutopilotDeviceCache {
         [pscustomobject]@{
             DeviceName      = $name
             SerialNumber    = $serial
+            ManagementName  = ''
             User            = $user
             OS              = 'Windows'
             OSVersion       = ''
@@ -1167,8 +1185,77 @@ $BtnAppDependency.Add_Click({
         [System.Windows.MessageBox]::Show($_.Exception.Message,'App Dependency Check','OK','Error') | Out-Null
     }
 })
+$BtnAssetStatus.Add_Click({
+    if (-not (Test-Connected)) { return }
 
-$LinkSite.Add_MouseLeftButtonUp({ Start-Process 'https://endpointguy.com' })
+    if ($null -eq $Script:SelectedDevice) {
+        [System.Windows.MessageBox]::Show(
+            'Select a device in the search results first.',
+            'Asset Status','OK','Warning') | Out-Null
+        return
+    }
+
+    # The Management name lives on the Intune managedDevice record, so this
+    # action needs an IntuneId - not the Entra record the group actions use.
+    # An Autopilot device that has not enrolled yet has no managedDevice.
+    if ([string]::IsNullOrWhiteSpace([string]$Script:SelectedDevice.IntuneId)) {
+        [System.Windows.MessageBox]::Show(
+            "$($Script:SelectedDevice.DeviceName) is not enrolled in Intune yet, so it has no Management name to set.`n`nA device imported into Autopilot only gets a Management name once it enrols.",
+            'Asset Status','OK','Warning') | Out-Null
+        Set-Status 'Asset Status needs a device that has enrolled in Intune.'
+        return
+    }
+
+    if (-not (Get-Command -Name Show-AssetStatusWindow -ErrorAction SilentlyContinue)) {
+        [System.Windows.MessageBox]::Show(
+            "AssetStatus.ps1 was not found.`n`nExpected in:`n  $(Join-Path $Script:ModuleRoot 'Modules\AssetStatus')",
+            'Module not available','OK','Error') | Out-Null
+        Set-Status 'Asset Status module is not available.'
+        return
+    }
+
+    Set-Status "Opening Asset Status for $($Script:SelectedDevice.DeviceName)..."
+    try {
+        Show-AssetStatusWindow -Device $Script:SelectedDevice `
+                               -Owner  $Window
+        Set-Status "Asset Status closed - device was $($Script:SelectedDevice.DeviceName)."
+    }
+    catch {
+        Set-Status "Asset Status failed: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show($_.Exception.Message,'Asset Status','OK','Error') | Out-Null
+    }
+})
+
+# ---------------------------------------------------------------------------
+# Header web link - open endpointguy.com in the default browser.
+# WPF will not navigate on its own; the RequestNavigate event must be handled.
+# ---------------------------------------------------------------------------
+$LnkSite = $Window.FindName('LnkSite')
+if ($LnkSite) {
+    $LnkSite.Add_RequestNavigate({
+        param($eventSender, $e)
+        try { Start-Process $e.Uri.AbsoluteUri }
+        catch { Set-Status "Could not open $($e.Uri.AbsoluteUri)" }
+        $e.Handled = $true
+    })
+}
+
+$LogoPath = Join-Path $Script:ModuleRoot 'EGLogoNew.png'
+if ($LogoImage -and (Test-Path $LogoPath)) {
+    try {
+        $bmp = New-Object System.Windows.Media.Imaging.BitmapImage
+        $bmp.BeginInit()
+        $bmp.UriSource   = New-Object System.Uri($LogoPath)
+        # Load the bytes now so the file is not left locked on disk.
+        $bmp.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        $bmp.EndInit()
+        $LogoImage.Source = $bmp
+    }
+    # A missing or corrupt logo must never stop the toolkit loading.
+    catch { $LogoImage.Visibility = [System.Windows.Visibility]::Collapsed }
+}
+else { if ($LogoImage) { $LogoImage.Visibility = [System.Windows.Visibility]::Collapsed } }
+
 
 # ---------------------------------------------------------------------------
 # Clock

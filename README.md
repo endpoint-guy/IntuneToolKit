@@ -13,6 +13,7 @@ Endpoint-Guy Intune Toolkit is a Windows PowerShell 5.1 and WPF application for 
 - [Using the toolkit](#using-the-toolkit)
 - [Bulk-add CSV format](#bulk-add-csv-format)
 - [App dependency checks](#app-dependency-checks)
+- [Asset statuses](#asset-statuses)
 - [Group eligibility](#group-eligibility)
 - [Repository structure](#repository-structure)
 - [Diagnostics and safety](#diagnostics-and-safety)
@@ -41,7 +42,7 @@ Without the attached action modules, `Toolkit.ps1` can still:
 - Load and cache the Intune managed-device inventory.
 - Search devices by device name, serial number, or primary username.
 - Use contains matching or **Exact match only**.
-- Display device name, serial number, user, operating system, OS version, compliance, ownership, model, and last sync.
+- Display device name, serial number, management name, user, operating system, OS version, compliance, ownership, model, and last sync.
 - Refresh the local device cache.
 - Select and review a managed device.
 - Export the current search results to a UTF-8 CSV file.
@@ -78,18 +79,29 @@ Location: `Modules\BulkAddToGroup\BulkAddToGroup.ps1`
 
 Location: `Modules\AppDependencyCheck\AppDependencyCheck.ps1`
 
-- Maps Win32 app dependency and supersedence relationships.
-- Flags circular references, chains deeper than five levels, and unassigned dependencies.
+- Lists every app that depends on a selected Win32 app, directly or indirectly.
+- Shows the relationship type, depth, install behaviour, and the full chain.
 - Read-only: issues only GET requests and never writes to Intune.
-- Lists every Win32 app A-Z in a drop-down; scan one app or all of them.
-- Exports findings to CSV.
+- Lists every Win32 app A-Z in a drop-down.
+- Exports the list to CSV.
+
+### Asset Status module
+
+Location: `Modules\AssetStatus\AssetStatus.ps1`
+
+- Sets the Intune Management name of the selected device to one of six lifecycle statuses: **In-Stock**, **Retired**, **Recycled**, **Stolen**, **Legalhold**, or **Lost**.
+- Replaces the Management name entirely with the chosen status word.
+- Shows the current Management name and a preview of the result before writing.
+- Uses a confirmation prompt that names the device, shows the old and new name, and defaults to **No**.
+- Acts on one device at a time and requires a device that has enrolled in Intune.
+- Re-reads the device from Graph after a write so the window shows what Intune actually holds.
 
 ## User instructions
 
 1. Download the toolkit ZIP from GitHub.
 2. Extract the ZIP to a folder on your computer.
 3. Review `Toolkit.ps1` and every PowerShell script in the `Modules` folder.
-4. Double-click `Run-Toolkit.bat`. Do not run as Admin. If unable to run, you can also run by opening a powershell Window as admin, and then running Toolkit.ps1 directly. 
+4. Double-click `Run-Toolkit.bat`.
 5. On first launch, allow the toolkit to install `Microsoft.Graph.Authentication` for the current user if prompted.
 6. Select **Connect to Graph** and complete the work or school account sign-in.
 
@@ -149,9 +161,17 @@ Location: `Modules\AppDependencyCheck\AppDependencyCheck.ps1`
 ### App dependency check
 
 1. Select **App Dependency Check**.
-2. Pick an app from the drop-down, or leave it on **(All apps)**.
-3. Select **Scan**.
-4. Review the findings and export them if needed.
+2. Pick the app you are about to change from the drop-down.
+3. Select **Find dependents**.
+4. Review the dependent apps and export the list if needed.
+
+### Update asset status
+
+1. Select the device in the search results.
+2. Select **Update Asset Status**.
+3. Review the current Management name shown for the device.
+4. Pick one of the six statuses from the drop-down and check the preview.
+5. Select **Update Management name**, then confirm at the prompt.
 
 ## Bulk-add CSV format
 
@@ -172,15 +192,37 @@ KIOSK-014
 
 The App Dependency Check module is read-only. It issues only GET requests and never modifies apps, relationships, or assignments.
 
-It reports three faults that stop a Win32 app chain from installing:
+It answers one question: **which apps depend on this one?** Pick an app and the module walks the relationship graph upwards, listing every app that would be affected if it were changed, replaced, or removed.
 
-| Finding | Severity | Meaning |
-|---|---|---|
-| Circular reference | Critical | The chain returns to an app it has already visited. Intune cannot resolve it and the install never completes. |
-| Chain too deep | Critical | The chain runs past the five levels Intune processes. Anything below level five is ignored at install time. |
-| Unassigned dependency | Warning | A dependency has no assignment, so Intune has nothing to install and the parent app stays blocked. |
+| Column | Meaning |
+|---|---|
+| Dependent app | The app that depends on the selected app. |
+| Relationship | `Dependency` or `Supersedence`. |
+| Level | `Direct` for a first-level dependent, `Indirect (n)` when reached through another app. |
+| Install | The Intune dependency behaviour: `autoInstall` or `detect`. |
+| Assigned | Whether the dependent app is assigned to any group. |
+| Chain | The full path from the selected app up to the dependent. |
 
-Supersedence relationships are included by default and can be excluded. Findings can be exported to CSV.
+Each app is reached by its shortest chain, so an app that is both a direct and an indirect dependent is reported as `Direct`. Supersedence is included by default and can be excluded. The list can be exported to CSV.
+
+## Asset statuses
+
+The Asset Status module writes one of six fixed lifecycle statuses to the Intune **Management name** (`managedDeviceName`) of the selected device. The status word replaces the Management name entirely.
+
+| Status | Typical use |
+|---|---|
+| `In-Stock` | Held in stock and awaiting assignment. |
+| `Retired` | Withdrawn from service. |
+| `Recycled` | Sent for disposal or recycling. |
+| `Stolen` | Reported stolen. |
+| `Legalhold` | Retained for legal or investigative reasons. |
+| `Lost` | Reported lost. |
+
+Only these six values can be written; the status is chosen from a drop-down and free text is not accepted.
+
+The Management name is a label only. Changing it does **not** change the device name, serial number, group memberships, or assignments, and it does **not** retire, wipe, or unenroll the device. Intune keeps no history of the previous Management name, so the old value cannot be restored from the toolkit — the confirmation prompt shows both the old and new name and defaults to **No**.
+
+A device must be enrolled in Intune to have a Management name. A device that has been imported into Autopilot but has not yet enrolled has no `managedDevice` record, so the action reports this and stops.
 
 ## Group eligibility
 
@@ -203,9 +245,12 @@ Only assigned, cloud-managed security groups are writable. Dynamic, rule-driven,
     ├── BulkAddToGroup
     │   ├── BulkAddToGroup.ps1
     │   └── BulkAddToGroup.xaml
-    └── AppDependencyCheck
-        ├── AppDependencyCheck.ps1
-        └── AppDependencyCheck.xaml
+    ├── AppDependencyCheck
+    │   ├── AppDependencyCheck.ps1
+    │   └── AppDependencyCheck.xaml
+    └── AssetStatus
+        ├── AssetStatus.ps1
+        └── AssetStatus.xaml
 ```
 
 PowerShell files contain embedded XAML for runtime use. External XAML supports UI development through `-XamlPath`.
@@ -219,10 +264,11 @@ PowerShell files contain embedded XAML for runtime use. External XAML supports U
 - Writes occur one item at a time.
 - Graph paging follows `@odata.nextLink`.
 - App Dependency Check is read-only and issues only GET requests.
+- Asset Status replaces only the Management name and never retires, wipes, or unenrolls a device.
 
 ## Development notes
 
-- Module functions use `Cdg`, `Rdg`, `Bag`, and `Adc` prefixes.
+- Module functions use `Cdg`, `Rdg`, `Bag`, `Adc`, and `Ast` prefixes.
 - Grid rows implement `INotifyPropertyChanged`.
 - Intune and Entra device records are resolved separately.
 - Keep embedded and external XAML synchronized.
@@ -235,4 +281,3 @@ Endpoint-Guy Intune Toolkit was built with assistance from Claude by Anthropic. 
 ## Disclaimer
 
 Review every included PowerShell script before use, especially before running the toolkit in production. You are responsible for validating its behavior, permissions, security impact, exported data, and suitability for your environment.
-
