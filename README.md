@@ -20,8 +20,30 @@ mine; a lot of the code was written with AI help.
 <!-- Screenshot: main window with search results and the Device Actions panel. -->
 ![EndpointGuy Intune Toolkit - main window](IntuneToolkit.png)
 
+## Recent changes
+
+**Bulk Update Asset Status (new module).** The Asset Status module now has a
+bulk counterpart. Feed it a CSV of device names, pick one status, and every
+matched device has its Intune Management name set in a single run. Each name
+is matched before anything is written - only names matching exactly one
+device can be ticked - and the current Management name is shown beside the
+new one so you can see what is being replaced. Every row reports its own
+result. See [Bulk Update Asset Status](#bulk-update-asset-status).
+
+**Advanced filter for search (new).** Search is no longer limited to one
+field at a time. **Advanced Filter** builds a multi-column query where each
+rule is a column, an operator and a value, and all rules have to match. Any
+column in the results grid can be filtered, columns with a known set of
+values give a drop-down instead of a text box, and a rule left without a
+value is ignored rather than emptying the results. See
+[Advanced filter](#advanced-filter).
+
+Both are on by default and can be switched off in `ModuleConfig.psd1` -
+`BulkAssetStatus` for the new module. See [Configuration](#configuration).
+
 ## Contents
 
+- [Recent changes](#recent-changes)
 - [Install MSI](#install-msi)
 - [Requirements](#requirements)
 - [Getting started](#getting-started)
@@ -122,6 +144,63 @@ Pick what you are searching by - **Device Name**, **Serial Number**, or
 Searches match on *contains* by default, so a partial name is enough. Tick
 **Exact match only** to narrow it to a precise match.
 
+Choose **Management Name** to filter by asset status instead of typing a
+term. The free-text box is replaced by a drop-down of the lifecycle statuses
+from the [Update Asset Status](#update-asset-status) module - the same list
+`AssetStatusValues` defines in `ModuleConfig.psd1`, so the two can never
+drift apart. Pick a status to list every device carrying that label, for
+example every device currently marked `In-Stock`.
+
+The status is matched against the *whole* Management name, ignoring case and
+surrounding spaces, because the Asset Status module writes the status and
+nothing else. Devices that have not enrolled in Intune yet have no Management
+name, so they are never returned in this mode.
+
+> **Filtering by location.** Because the status is the entire Management
+> name, there is nothing in that field to identify a site, so a search
+> cannot yet be narrowed to devices In-Stock at one location. To make that
+> possible the location has to be recorded somewhere first - either appended
+> to the Management name when the status is set, or held in the device
+> category. Ask for this and it can be added.
+
+#### Advanced filter
+
+Select **Advanced Filter** to build a multi-column query instead of searching
+one field at a time. Each rule is a column, an operator and a value, and
+**all** rules have to match, so rules narrow the list as you add them.
+
+Use **+ Add rule** for another condition, the red **−** to drop one, and
+**Clear** to start again. For example, two rules - `Device Name starts with
+TC1US` and `Management Name equals In-Stock` - return only the in-stock
+devices at that site prefix.
+
+Operators: *contains*, *does not contain*, *starts with*, *ends with*,
+*equals*, *does not equal*, *is blank*, *is not blank*. The value box
+disappears for the last two, since they take no value.
+
+Any column shown in the results grid can be filtered - Device Name, Serial
+Number, Management Name, User, OS, OS Version, Compliance, Ownership, Model,
+Manufacturer, Category, Last Sync and Source.
+
+Columns with a known set of values give you a drop-down rather than a text
+box, so they cannot be mistyped:
+
+| Column | Values |
+| --- | --- |
+| Management Name | the Asset Status lifecycle labels |
+| Compliance | compliant, noncompliant, conflict, error, inGracePeriod, unknown |
+| Ownership | company, personal, unknown |
+| Source | Intune, Autopilot |
+
+Everything else takes free text. Matching ignores case throughout, and `*`,
+`?` or `[` in a value are matched literally rather than as wildcards.
+
+`Last Sync` is text in `yyyy-MM-dd HH:mm` form, so *starts with* `2026-09`
+is the way to pick a month - there is no before/after date comparison yet.
+
+A rule left without a value is ignored rather than matching nothing, so a
+half-finished rule cannot silently empty the results.
+
 Results cover Intune managed devices and devices imported into Windows
 Autopilot that have not enrolled yet, so a new machine can be found before it
 is ever handed to anyone.
@@ -215,6 +294,37 @@ You then search for and pick the target group. A confirmation naming the group
 and the device count is shown first, and it defaults to No. Results can be
 exported to CSV.
 
+#### Bulk Update Asset Status
+
+The bulk counterpart of [Update Asset Status](#update-asset-status). It sets
+the Intune Management name on many devices at once, from a list of device
+names in a CSV, so a whole shipment or a whole decommission batch is one
+run rather than one window per machine.
+
+Device names are read from the first column of the file - every line is
+read, nothing is skipped - and each one is matched against Intune. Only a
+name that matches exactly **one** managed device can be written to; names
+that match nothing, or match several devices, are listed with the reason
+and cannot be ticked.
+
+The current Management name of every matched device is read from Graph and
+shown in the grid beside the new one, so you can see exactly what is about
+to be replaced before anything is written.
+
+One status is picked for the whole batch, from the same drop-down the
+single-device module uses. Both read the same `AssetStatusValues` list in
+`ModuleConfig.psd1`, so the two can never drift apart, and a value that is
+not on the approved list is refused before anything is written.
+
+A confirmation naming the status and the device count is shown first, and
+it defaults to No. Each row reports its own result as the run proceeds, so
+a partial failure is visible per device rather than as one opaque error.
+Results can be exported to CSV.
+
+> **The Management name is a label only.** Changing it does not retire, wipe
+> or unenrol any device, and it leaves device names, serial numbers, group
+> memberships and assignments untouched.
+
 ### Reporting
 
 #### App Dependency Check
@@ -229,6 +339,48 @@ exported to CSV.
 
 > **Read-only.** Every Graph call this module makes is a GET, so it is safe to
 > run against production at any time.
+
+### Local Actions
+
+#### Windows Updates
+
+The odd one out. Every other module talks to Microsoft Graph; this one
+connects to the machine itself over PowerShell Remoting (WinRM) and drives
+the Windows Update Agent on it directly. That means it can do what Graph
+cannot - scan, download and install specific updates on demand, and watch it
+happen - but it also means the machine has to be online, reachable, and you
+need local administrator rights on it.
+
+Selecting a device and opening the module gives you **Test connection**
+first, which checks DNS, WinRM and a remote command in turn and tells you
+which of the three failed rather than just reporting failure.
+
+**Scan** lists every update the machine is offered, with its size,
+classification and whether a reboot is expected. Optional and driver updates
+can be included. From there:
+
+- **Download** fetches the ticked updates without installing anything.
+- **Install** downloads if needed, then installs.
+
+Both write, so both confirm first and both default to No. Progress is shown
+per update - download percentage, install percentage and the result - rather
+than one bar for the whole batch, because a single large update can otherwise
+look like a hung window.
+
+Feature updates (the `23H2`-style version upgrades) do not install through
+the normal path - Windows refuses them with `0x80240022`. The module detects
+them and routes them through the same mechanism Windows Update itself uses,
+polling setup progress until it finishes.
+
+> **Reboots are suppressed by default.** The module sets the no-auto-reboot
+> policy for the duration of the run and puts the original value back
+> afterwards, so an install cannot restart a machine out from under whoever
+> is using it. Tick **Allow reboot** if you want the normal behaviour. Where
+> a reboot is still pending at the end, the module says so rather than
+> acting on it.
+
+> **Requirements:** WinRM reachable on the target and local administrator
+> rights on it. No Graph permissions are used or requested.
 
 ## Configuration
 
@@ -286,6 +438,7 @@ keeps whatever the script already had.
 | `AssetStatus` | Update Asset Status | Device Actions |
 | `BulkAddToGroup` | Bulk Add to Group | Bulk Actions |
 | `AppDependencyCheck` | App Dependency Check | Reporting |
+| `WindowsUpdates` | Windows Updates | Local Actions |
 
 ### Asset status values
 
@@ -357,6 +510,12 @@ contributes nothing, so a trimmed build asks the tenant for less - see
 | Bulk Add to Group | `DeviceManagementManagedDevices.Read.All`, `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All` |
 | App Dependency Check | `DeviceManagementApps.Read.All` |
 | Update Asset Status | `DeviceManagementManagedDevices.ReadWrite.All` |
+| Windows Updates | *(none - does not use Graph)* |
+
+> **Windows Updates is the exception.** It does not call Graph at all, so it
+> requests no scopes and adds nothing to the consent prompt. Instead it needs
+> PowerShell Remoting (WinRM) to the target machine and local administrator
+> rights on it, because the Windows Update Agent will only run locally.
 
 Duplicates are merged, so a scope already in the base list is not requested
 twice.
