@@ -5,7 +5,9 @@
 .DESCRIPTION
     Phase 1 build:
       - Connect to Microsoft Graph (interactive) with live connection status indicator
-      - Device search by Device Name / Serial Number / Primary Username (contains or exact)
+      - Device search by Device Name / Serial Number / Primary Username (contains or exact),
+        or by Management Name, which filters on the Asset Status lifecycle labels
+      - Advanced filter: stack rules across any result column (all must match)
       - Devices imported into Windows Autopilot but NOT yet enrolled in
         Intune are included in the search, so a brand new machine can be
         found (and added to groups) before it ever enrols
@@ -22,9 +24,9 @@
         directly or indirectly, so the blast radius of changing or
         removing it is visible before the change is made
       - Asset Status module (Modules\AssetStatus) - sets the Intune
-        Management name of the selected device to one of six lifecycle
-        statuses (In-Stock, Retired, Recycled, Stolen, Legalhold, Lost),
-        with confirmation
+        Management name of the selected device to one of seven lifecycle
+        statuses (Assigned, In-Stock, Retired, Recycled, Stolen, Legalhold,
+        Lost), with confirmation
       - Modules can be switched on or off per environment from the MODULE
         REGISTRY near the top of this file, or from an optional
         ModuleConfig.psd1 dropped next to Toolkit.ps1. A module that is
@@ -33,8 +35,8 @@
       - Remaining Device Actions are stubbed with "Coming soon"
 
 .NOTES
-    SELF-CONTAINED UI - the WPF XAML is embedded in this file, so there is no
-    MainWindow.xaml dependency at runtime. Use -XamlPath for UI development.
+    SELF-CONTAINED UI - the WPF XAML is embedded in this file, so there is
+    no separate .xaml file to deploy or keep in sync.
 
     Requires: Windows PowerShell 5.1; Graph authentication module installs automatically
         First launch requires access to the PowerShell Gallery
@@ -45,11 +47,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$TenantId,
-
-    # Optional dev override: point at an external MainWindow.xaml to tweak the UI
-    # without recompiling. When omitted, the embedded XAML is used.
-    [string]$XamlPath
+    [string]$TenantId
 )
 
 Set-StrictMode -Version Latest
@@ -150,6 +148,13 @@ $Script:ModuleRegistry = @(
         Enabled = $true
         Path    = 'Modules\AssetStatus\AssetStatus.ps1'
         Button  = 'BtnAssetStatus'
+        Scopes  = @('DeviceManagementManagedDevices.ReadWrite.All')
+    }
+    @{
+        Key     = 'BulkAssetStatus'
+        Enabled = $true
+        Path    = 'Modules\BulkAssetStatus\BulkAssetStatus.ps1'
+        Button  = 'BtnBulkAssetStatus'
         Scopes  = @('DeviceManagementManagedDevices.ReadWrite.All')
     }
 )
@@ -696,13 +701,16 @@ $XamlString = @'
                                 ToolTip="Remove the selected device from its assigned security groups. Asks for confirmation first."/>
                         <Button x:Name="BtnAssetStatus"  Style="{StaticResource ActionButton}"
                                 Content="Update Asset Status"
-                                ToolTip="Set the Intune Management name of the selected device to In-Stock, Retired, Recycled, Stolen, Legalhold or Lost. Asks for confirmation first."/>
+                                ToolTip="Set the Intune Management name of the selected device to Assigned, In-Stock, Retired, Recycled, Stolen, Legalhold or Lost. Asks for confirmation first."/>
                     </StackPanel>
 
                     <StackPanel Grid.Row="3" Margin="0,8,0,0">
                         <Separator x:Name="SepBulkActions" Background="{StaticResource SeparatorBrush}" Margin="0,0,0,12"/>
                         <TextBlock x:Name="HdrBulkActions" Text="Bulk Actions" Style="{StaticResource CardHeader}" Margin="0,0,0,12"/>
                         <Button x:Name="BtnBulkAddGroup" Style="{StaticResource ActionButton}" Content="Bulk Add to Group"/>
+                        <Button x:Name="BtnBulkAssetStatus" Style="{StaticResource ActionButton}"
+                                Content="Bulk Update Asset Status"
+                                ToolTip="Set the Intune Management name of many devices at once from a CSV of device names. Asks for confirmation first."/>
                         <Separator x:Name="SepReporting" Background="{StaticResource SeparatorBrush}" Margin="0,14,0,12"/>
                         <TextBlock x:Name="HdrReporting" Text="Reporting" Style="{StaticResource CardHeader}" Margin="0,0,0,12"/>
                         <Button x:Name="BtnAppDependency" Style="{StaticResource ActionButton}"
@@ -733,7 +741,9 @@ $XamlString = @'
                                 <ComboBoxItem Content="Device Name"/>
                                 <ComboBoxItem Content="Serial Number"/>
                                 <ComboBoxItem Content="Primary Username"/>
+                                <ComboBoxItem Content="Management Name"/>
                             </ComboBox>
+                            <ComboBox x:Name="CmbAssetStatus" Width="170" Margin="14,0,0,0" Visibility="Collapsed" ToolTip="Asset Status lifecycle labels, from the Asset Status module."/>
                             <TextBox x:Name="TxtSearch" Width="300" Height="32" Margin="14,0,0,0"/>
                             <Button x:Name="BtnSearch" Style="{StaticResource PrimaryButton}"
                                     Content="Search" Width="110" Height="32" Margin="14,0,0,0"/>
@@ -741,7 +751,32 @@ $XamlString = @'
                                       VerticalAlignment="Center" FontSize="13" Margin="18,0,0,0"/>
                             <Button x:Name="BtnRefreshCache" Style="{StaticResource NeutralButton}"
                                     Content="Refresh Device Cache" MinHeight="32" Padding="14,6" VerticalAlignment="Center" Margin="18,0,0,0"/>
+                            <Button x:Name="BtnAdvanced" Style="{StaticResource NeutralButton}"
+                                    Content="Advanced Filter" MinHeight="32" Padding="14,6" VerticalAlignment="Center" Margin="18,0,0,0"
+                                    ToolTip="Build a multi-column filter. All rules must match."/>
                         </StackPanel>
+
+                        <!-- ADVANCED FILTER PANEL -->
+                        <!-- Rows are generated at runtime into RulesPanel, so the number -->
+                        <!-- of criteria is not fixed by the markup.                      -->
+                        <Border x:Name="AdvancedPanel" Visibility="Collapsed" Margin="0,16,0,0"
+                                Background="{DynamicResource InputBrush}"
+                                BorderBrush="{DynamicResource InputBorderBrush}"
+                                BorderThickness="1" CornerRadius="4" Padding="14">
+                            <StackPanel>
+                                <TextBlock Text="Match ALL of the following rules:"
+                                           FontSize="13" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                                <StackPanel x:Name="RulesPanel"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                    <Button x:Name="BtnAddRule" Style="{StaticResource NeutralButton}"
+                                            Content="+ Add rule" MinHeight="30" Padding="12,5"/>
+                                    <Button x:Name="BtnApplyFilter" Style="{StaticResource PrimaryButton}"
+                                            Content="Apply Filter" MinWidth="120" MinHeight="30" Padding="12,5" Margin="10,0,0,0"/>
+                                    <Button x:Name="BtnClearFilter" Style="{StaticResource NeutralButton}"
+                                            Content="Clear" MinHeight="30" Padding="12,5" Margin="10,0,0,0"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
 
@@ -811,10 +846,6 @@ $XamlString = @'
 </Window>
 '@
 
-if ($XamlPath -and (Test-Path $XamlPath)) {
-    $XamlString = Get-Content -Path $XamlPath -Raw
-}
-
 try {
     [xml]$xamlDoc = $XamlString
     $reader = New-Object System.Xml.XmlNodeReader $xamlDoc
@@ -830,7 +861,7 @@ catch {
 # ---------------------------------------------------------------------------
 # Map every x:Name into a script-scope variable of the same name.
 # NOTE: x:Name lives in the XAML namespace, so GetAttribute('Name') returns
-# nothing. The attribute must be matched by LocalName instead.
+# an empty string; the attribute has to be matched by local-name() instead.
 # ---------------------------------------------------------------------------
 $namesFound = 0
 foreach ($node in $xamlDoc.SelectNodes("//*[@*[local-name()='Name']]")) {
@@ -855,11 +886,12 @@ if ($namesFound -eq 0) {
 }
 
 foreach ($required in @('BtnConnect','BtnSearch','BtnRefreshCache','GridDevices',
-                        'TxtSearch','CmbSearchField','ChkExact','StatusText',
+                        'TxtSearch','CmbSearchField','CmbAssetStatus','ChkExact','StatusText',
                         'ConnIcon','ConnStatus','ConnAccount','ResultCount',
+                        'BtnAdvanced','AdvancedPanel','RulesPanel','BtnAddRule','BtnApplyFilter','BtnClearFilter',
                         'SelectedDeviceText','ClockText','BtnExportCsv',
                         'BtnCopyGroups','BtnRemoveGroups','BtnAssetStatus',
-                        'BtnBulkAddGroup','BtnAppDependency')) {
+                        'BtnBulkAddGroup','BtnBulkAssetStatus','BtnAppDependency')) {
     if (-not (Get-Variable -Name $required -Scope Script -ErrorAction SilentlyContinue)) {
         [System.Windows.MessageBox]::Show(
             "Control '$required' was not found in the XAML.",
@@ -1130,10 +1162,32 @@ function Test-DeviceHasEntraRecord {
 function Invoke-DeviceSearch {
     if (-not (Test-Connected)) { return }
 
-    if ([string]::IsNullOrWhiteSpace($TxtSearch.Text)) {
+    $field = switch ($CmbSearchField.SelectedIndex) {
+        0 { 'DeviceName' }
+        1 { 'SerialNumber' }
+        2 { 'User' }
+        3 { 'ManagementName' }
+        default { 'DeviceName' }
+    }
+
+    # The status is compared EXACTLY (case-insensitively) against the whole
+    # Management name, because the Asset Status module writes the status
+    # verbatim and nothing else.
+    $byStatus = ($field -eq 'ManagementName')
+    $status   = ''
+
+    if ($byStatus) {
+        $status = [string]$CmbAssetStatus.SelectedItem
+        if ([string]::IsNullOrWhiteSpace($status)) {
+            Set-Status 'Pick an asset status to filter on.'
+            return
+        }
+    }
+    elseif ([string]::IsNullOrWhiteSpace($TxtSearch.Text)) {
         Set-Status 'Enter a search term.'
         return
     }
+
     $term = $TxtSearch.Text.Trim()
 
     if ($Script:DeviceCache.Count -eq 0) {
@@ -1141,17 +1195,17 @@ function Invoke-DeviceSearch {
         if ($Script:DeviceCache.Count -eq 0) { return }
     }
 
-    $field = switch ($CmbSearchField.SelectedIndex) {
-        0 { 'DeviceName' }
-        1 { 'SerialNumber' }
-        2 { 'User' }
-        default { 'DeviceName' }
-    }
     $exact = [bool]$ChkExact.IsChecked
 
     Set-Busy $true
     try {
         $hits = $Script:DeviceCache | Where-Object {
+            if ($byStatus) {
+                # Autopilot-only rows carry no Management name, so they drop out.
+                $v = [string]$_.ManagementName
+                return ((-not [string]::IsNullOrWhiteSpace($v)) -and ($v.Trim() -eq $status))
+            }
+
             $v = $_.$field
             if ([string]::IsNullOrEmpty($v)) { $false }
             elseif ($exact)                  { $v -eq $term }
@@ -1162,7 +1216,8 @@ function Invoke-DeviceSearch {
         foreach ($h in $hits) { $Script:Results.Add($h) }
 
         $ResultCount.Text = "$($Script:Results.Count) device(s) found"
-        Set-Status "Search complete - $($Script:Results.Count) result(s) for '$term' in $field."
+        $what = if ($byStatus) { $status } else { "'$term'" }
+        Set-Status "Search complete - $($Script:Results.Count) result(s) for $what in $field."
     }
     catch {
         Set-Status "Search failed: $($_.Exception.Message)"
@@ -1193,6 +1248,347 @@ $BtnConnect.Add_Click({
 })
 
 $BtnSearch.Add_Click({ Invoke-DeviceSearch })
+
+# ---------------------------------------------------------------------------
+# Management Name search mode.
+#
+# The status list is owned by the Asset Status module: when that module is
+# enabled it has already been dot-sourced and has set $Script:AstStatuses
+# from ModuleConfig.psd1, so the drop-down here and the drop-down that writes
+# the label cannot drift apart. When the module is switched off we fall back
+# to the same seven built-in labels, because devices in the tenant may still be
+# carrying them from an earlier build.
+# ---------------------------------------------------------------------------
+$Script:SearchStatuses = @('Assigned','In-Stock','Retired','Recycled','Stolen','Legalhold','Lost')
+
+if ((Get-Variable -Name AstStatuses -Scope Script -ErrorAction SilentlyContinue) -and
+    $null -ne $Script:AstStatuses) {
+
+    $fromModule = @($Script:AstStatuses) |
+                  ForEach-Object { [string]$_ } |
+                  Where-Object   { -not [string]::IsNullOrWhiteSpace($_) } |
+                  ForEach-Object { $_.Trim() }
+
+    if ($fromModule.Count -gt 0) { $Script:SearchStatuses = @($fromModule) }
+}
+
+# ---------------------------------------------------------------------------
+# ADVANCED FILTER
+#
+# Builds a list of rules (column + operator + value) that are ANDed together.
+# Rule rows are generated at runtime rather than declared in the XAML, so the
+# number of criteria is open-ended.
+#
+# Columns marked with a fixed value list render a drop-down instead of a text
+# box, so Management Name can only ever be filtered on a real Asset Status
+# label - no free typing, no typos, no silently empty result sets.
+# ---------------------------------------------------------------------------
+$Script:FilterColumns = [ordered]@{
+    "Device Name"     = "DeviceName"
+    "Serial Number"   = "SerialNumber"
+    "Management Name" = "ManagementName"
+    "User"            = "User"
+    "OS"              = "OS"
+    "OS Version"      = "OSVersion"
+    "Compliance"      = "Compliance"
+    "Ownership"       = "Ownership"
+    "Model"           = "Model"
+    "Manufacturer"    = "Manufacturer"
+    "Category"        = "Category"
+    "Last Sync"       = "LastSync"
+    "Source"          = "Source"
+}
+
+# Operators available to every column.
+$Script:FilterOperators = @(
+    "contains","does not contain","starts with","ends with",
+    "equals","does not equal","is blank","is not blank"
+)
+
+# Columns whose values come from a fixed list. Anything not named here gets a
+# free-text box. Compliance and Ownership are Graph enumerations, so they are
+# safe to constrain too.
+function Get-FilterValueList {
+    param([string]$Property)
+
+    switch ($Property) {
+        "ManagementName" { return @($Script:SearchStatuses) }
+        "Compliance"     { return @("compliant","noncompliant","conflict","error","inGracePeriod","unknown") }
+        "Ownership"      { return @("company","personal","unknown") }
+        "Source"         { return @("Intune","Autopilot") }
+        default          { return $null }
+    }
+}
+
+# Operators that take no value - the value control is hidden for these.
+function Test-FilterOperatorNeedsValue {
+    param([string]$Operator)
+    return ($Operator -ne "is blank" -and $Operator -ne "is not blank")
+}
+
+# Creates one rule row and appends it to RulesPanel.
+function Add-FilterRule {
+    $row = New-Object System.Windows.Controls.StackPanel
+    $row.Orientation = "Horizontal"
+    $row.Margin      = "0,0,0,8"
+
+    $cmbCol = New-Object System.Windows.Controls.ComboBox
+    $cmbCol.Width = 170
+    foreach ($k in $Script:FilterColumns.Keys) { [void]$cmbCol.Items.Add($k) }
+    # SelectedIndex is set after the handlers are wired, below.
+
+    $cmbOp = New-Object System.Windows.Controls.ComboBox
+    $cmbOp.Width  = 150
+    $cmbOp.Margin = "8,0,0,0"
+    foreach ($o in $Script:FilterOperators) { [void]$cmbOp.Items.Add($o) }
+    # SelectedIndex is set after the handlers are wired, below.
+    # Both a text box and a drop-down are created; exactly one is shown,
+    # decided by the column. Swapping visibility is far simpler than
+    # rebuilding the row every time the column changes.
+    $txtVal = New-Object System.Windows.Controls.TextBox
+    $txtVal.Width  = 240
+    $txtVal.Height = 32
+    $txtVal.Margin = "8,0,0,0"
+
+    $cmbVal = New-Object System.Windows.Controls.ComboBox
+    $cmbVal.Width      = 240
+    $cmbVal.Margin     = "8,0,0,0"
+    $cmbVal.Visibility = [System.Windows.Visibility]::Collapsed
+
+    $btnDel = New-Object System.Windows.Controls.Button
+    $btnDel.Content = [char]0x2212   # minus sign - clearer than X for "remove rule"
+    $btnDel.Width   = 30
+    $btnDel.Height  = 30
+    $btnDel.Margin  = "8,0,0,0"
+    $btnDel.ToolTip = "Remove this rule"
+    $style = $Window.TryFindResource("NeutralButton")
+    if ($null -ne $style) { $btnDel.Style = $style }
+    # Overrides go after the style: NeutralButton sets Padding/FontSize
+    # that would otherwise crush the glyph on a 30x30 button.
+    $btnDel.Padding    = "0"
+    $btnDel.FontSize   = 18
+    $btnDel.FontWeight = "Bold"
+    $red = $Window.TryFindResource("ConnBadBrush")
+    if ($null -eq $red) {
+        $red = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(255,107,107))
+    }
+    $btnDel.Foreground = $red
+
+    # Show the drop-down for fixed-list columns, the text box otherwise, and
+    # hide both when the operator does not take a value.
+    # Local copy: GetNewClosure() captures locals, but $Script: inside the
+    # closure resolves to the closure module, where the script vars are null.
+    $colMap = $Script:FilterColumns
+
+    $syncRow = {
+        $colName = [string]$cmbCol.SelectedItem
+        $prop    = [string]$colMap[$colName]
+        $list    = Get-FilterValueList -Property $prop
+        $needs   = Test-FilterOperatorNeedsValue ([string]$cmbOp.SelectedItem)
+
+        if (-not $needs) {
+            $txtVal.Visibility = [System.Windows.Visibility]::Collapsed
+            $cmbVal.Visibility = [System.Windows.Visibility]::Collapsed
+            return
+        }
+
+        if ($null -ne $list) {
+            # Repopulate only when the list actually changed, so the current
+            # selection survives an operator change.
+            $existing = @($cmbVal.Items | ForEach-Object { [string]$_ })
+            if (($existing -join "|") -ne (@($list) -join "|")) {
+                $cmbVal.Items.Clear()
+                foreach ($v in $list) { [void]$cmbVal.Items.Add($v) }
+                $cmbVal.SelectedIndex = 0
+            }
+            $cmbVal.Visibility = [System.Windows.Visibility]::Visible
+            $txtVal.Visibility = [System.Windows.Visibility]::Collapsed
+        }
+        else {
+            $cmbVal.Visibility = [System.Windows.Visibility]::Collapsed
+            $txtVal.Visibility = [System.Windows.Visibility]::Visible
+        }
+    }.GetNewClosure()
+
+    # Select defaults BEFORE wiring SelectionChanged, otherwise the handler
+    # fires against a row that is not fully built yet.
+    $cmbCol.SelectedIndex = 0
+    $cmbOp.SelectedIndex  = 0
+
+    # GetNewClosure() pins each handler to the controls of the row it was
+    # built for; without it every row would end up driving the last row added.
+    $cmbCol.Add_SelectionChanged($syncRow)
+    $cmbOp.Add_SelectionChanged($syncRow)
+    # Remove via the row's own parent - no captured panel reference needed.
+    $btnDel.Add_Click({ $p = $row.Parent; if ($null -ne $p) { [void]$p.Children.Remove($row) } }.GetNewClosure())
+
+    [void]$row.Children.Add($cmbCol)
+    [void]$row.Children.Add($cmbOp)
+    [void]$row.Children.Add($txtVal)
+    [void]$row.Children.Add($cmbVal)
+    [void]$row.Children.Add($btnDel)
+
+    # Tag carries the controls, so Get-FilterRules can read a rule back
+    # without relying on child positions.
+    $row.Tag = [pscustomobject]@{
+        Column   = $cmbCol
+        Operator = $cmbOp
+        TextBox  = $txtVal
+        ComboBox = $cmbVal
+    }
+
+    [void]$RulesPanel.Children.Add($row)
+    & $syncRow
+}
+
+# Reads every rule row back into plain objects.
+function Get-FilterRules {
+    $rules = New-Object System.Collections.Generic.List[object]
+
+    foreach ($row in $RulesPanel.Children) {
+        $t = $row.Tag
+        if ($null -eq $t) { continue }
+
+        $colName = [string]$t.Column.SelectedItem
+        if ([string]::IsNullOrWhiteSpace($colName)) { continue }
+
+        $op    = [string]$t.Operator.SelectedItem
+        $needs = Test-FilterOperatorNeedsValue $op
+
+        $val = ""
+        if ($needs) {
+            $val = if ($t.ComboBox.Visibility -eq [System.Windows.Visibility]::Visible) {
+                       [string]$t.ComboBox.SelectedItem
+                   } else {
+                       [string]$t.TextBox.Text
+                   }
+            # A rule with no value yet is skipped rather than matching nothing.
+            if ([string]::IsNullOrWhiteSpace($val)) { continue }
+        }
+
+        $rules.Add([pscustomobject]@{
+            ColumnName = $colName
+            Property   = [string]$Script:FilterColumns[$colName]
+            Operator   = $op
+            Value      = $val.Trim()
+        })
+    }
+
+    return ,$rules
+}
+
+# Evaluates one rule against one device. Comparisons are case-insensitive,
+# matching the rest of the toolkit.
+function Test-FilterRule {
+    param($Device,$Rule)
+
+    $v = [string]$Device.($Rule.Property)
+    if ($null -eq $v) { $v = "" }
+    $v = $v.Trim()
+    $t = $Rule.Value
+
+    # Escape *, ? and [ so a value typed by the user is matched literally -
+    # -like would otherwise treat them as wildcards. Only the operators that
+    # use -like need this; -eq is unaffected.
+    $tLike = [System.Management.Automation.WildcardPattern]::Escape($t)
+
+    switch ($Rule.Operator) {
+        "is blank"         { return [string]::IsNullOrWhiteSpace($v) }
+        "is not blank"     { return (-not [string]::IsNullOrWhiteSpace($v)) }
+        "contains"         { return ($v -like "*$tLike*") }
+        "does not contain" { return (-not ($v -like "*$tLike*")) }
+        "starts with"      { return ($v -like "$tLike*") }
+        "ends with"        { return ($v -like "*$tLike") }
+        "equals"           { return ($v -eq $t) }
+        "does not equal"   { return ($v -ne $t) }
+        default            { return $true }
+    }
+}
+
+# Runs every rule against the cache. All rules must match (AND).
+function Invoke-AdvancedFilter {
+    if (-not (Test-Connected)) { return }
+
+    $rules = Get-FilterRules
+    if ($rules.Count -eq 0) {
+        Set-Status "Add at least one rule with a value, then select Apply Filter."
+        return
+    }
+
+    if ($Script:DeviceCache.Count -eq 0) {
+        Update-DeviceCache
+        if ($Script:DeviceCache.Count -eq 0) { return }
+    }
+
+    Set-Busy $true
+    try {
+        $hits = $Script:DeviceCache | Where-Object {
+            $device = $_
+            $keep   = $true
+            foreach ($rule in $rules) {
+                if (-not (Test-FilterRule -Device $device -Rule $rule)) { $keep = $false; break }
+            }
+            $keep
+        } | Sort-Object DeviceName
+
+        $Script:Results.Clear()
+        foreach ($h in $hits) { $Script:Results.Add($h) }
+
+        $ResultCount.Text = "$($Script:Results.Count) device(s) found"
+
+        $summary = ($rules | ForEach-Object {
+            if (Test-FilterOperatorNeedsValue $_.Operator) { "$($_.ColumnName) $($_.Operator) ''$($_.Value)''" }
+            else { "$($_.ColumnName) $($_.Operator)" }
+        }) -join " AND "
+
+        Set-Status "Filter complete - $($Script:Results.Count) result(s) for: $summary"
+    }
+    catch {
+        Set-Status "Filter failed: $($_.Exception.Message)"
+    }
+    finally { Set-Busy $false }
+}
+
+# Show/hide the panel. The simple search bar stays usable either way, so
+# nothing is taken away by opening this.
+$BtnAdvanced.Add_Click({
+  try {
+    $open = ($AdvancedPanel.Visibility -eq [System.Windows.Visibility]::Visible)
+    $AdvancedPanel.Visibility = if ($open) { [System.Windows.Visibility]::Collapsed }
+                               else        { [System.Windows.Visibility]::Visible }
+    # Start with one blank rule so the panel is never empty on first open.
+    if (-not $open -and $RulesPanel.Children.Count -eq 0) { Add-FilterRule }
+  }
+  catch { [System.Windows.MessageBox]::Show("Advanced filter failed to open:`n`n$($_.Exception.Message)",'Advanced filter','OK','Error') | Out-Null }
+})
+
+$BtnAddRule.Add_Click({ Add-FilterRule })
+$BtnApplyFilter.Add_Click({ Invoke-AdvancedFilter })
+$BtnClearFilter.Add_Click({
+    $RulesPanel.Children.Clear()
+    Add-FilterRule
+    Set-Status "Filter rules cleared."
+})
+
+foreach ($s in $Script:SearchStatuses) { [void]$CmbAssetStatus.Items.Add($s) }
+if ($CmbAssetStatus.Items.Count -gt 0) { $CmbAssetStatus.SelectedIndex = 0 }
+
+# Swap the free-text box for the status drop-down when Management Name is
+# picked. The status is matched exactly, so a free-text term would have
+# nothing left to narrow - the text box and Exact match only are both
+# hidden/disabled in this mode rather than left on screen doing nothing.
+function Update-SearchFieldUi {
+    $byStatus = ($CmbSearchField.SelectedIndex -eq 3)
+
+    $CmbAssetStatus.Visibility = if ($byStatus) { [System.Windows.Visibility]::Visible } else { [System.Windows.Visibility]::Collapsed }
+    $TxtSearch.Visibility      = if ($byStatus) { [System.Windows.Visibility]::Collapsed } else { [System.Windows.Visibility]::Visible }
+    $ChkExact.IsEnabled        = -not $byStatus
+}
+
+$CmbSearchField.Add_SelectionChanged({ Update-SearchFieldUi })
+Update-SearchFieldUi
+
+$CmbAssetStatus.Add_SelectionChanged({ if ((Get-GraphContextSafe) -and $Script:DeviceCache.Count -gt 0) { Invoke-DeviceSearch } })
 
 # WPF event scriptblocks populate $args[0] (sender) and $args[1] (event args).
 # $_ is NOT set here, which would trip Set-StrictMode.
@@ -1399,6 +1795,37 @@ $BtnAssetStatus.Add_Click({
     }
 })
 
+$BtnBulkAssetStatus.Add_Click({
+    # Switched off in the module registry at the top of this script.
+    if (-not (Test-ModuleEnabled -Key 'BulkAssetStatus')) {
+        Set-Status 'Bulk Update Asset Status is switched off in this build.'
+        return
+    }
+
+    if (-not (Test-Connected)) { return }
+
+    # Unlike the single-device Asset Status action, this one works from a
+    # CSV, so it does NOT need a device selected in the search results.
+    if (-not (Get-Command -Name Show-BulkAssetStatusWindow -ErrorAction SilentlyContinue)) {
+        [System.Windows.MessageBox]::Show(
+            "BulkAssetStatus.ps1 was not found.`n`nExpected in:`n  $(Join-Path $Script:ModuleRoot 'Modules\BulkAssetStatus')",
+            'Module not available','OK','Error') | Out-Null
+        Set-Status 'Bulk Update Asset Status module is not available.'
+        return
+    }
+
+    Set-Status 'Opening Bulk Update Asset Status...'
+    try {
+        Show-BulkAssetStatusWindow -DeviceCache $Script:DeviceCache `
+                                   -Owner       $Window
+        Set-Status 'Bulk Update Asset Status closed.'
+    }
+    catch {
+        Set-Status "Bulk Update Asset Status failed: $($_.Exception.Message)"
+        [System.Windows.MessageBox]::Show($_.Exception.Message,'Bulk Update Asset Status','OK','Error') | Out-Null
+    }
+})
+
 # ---------------------------------------------------------------------------
 # Header web link - open endpointguy.com in the default browser.
 # WPF will not navigate on its own; the RequestNavigate event must be handled.
@@ -1469,7 +1896,7 @@ function Update-ModuleUi {
 
     # Hide a section header and its separator when every button under it is gone.
     foreach ($section in @(
-        @{ Keys = @('BulkAddToGroup');     Header = 'HdrBulkActions'; Separator = 'SepBulkActions' }
+        @{ Keys = @('BulkAddToGroup','BulkAssetStatus'); Header = 'HdrBulkActions'; Separator = 'SepBulkActions' }
         @{ Keys = @('AppDependencyCheck'); Header = 'HdrReporting';   Separator = 'SepReporting'   }
     )) {
         $anyVisible = $false

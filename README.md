@@ -20,30 +20,8 @@ mine; a lot of the code was written with AI help.
 <!-- Screenshot: main window with search results and the Device Actions panel. -->
 ![EndpointGuy Intune Toolkit - main window](IntuneToolkit.png)
 
-## Recent changes
-
-**Bulk Update Asset Status (new module).** The Asset Status module now has a
-bulk counterpart. Feed it a CSV of device names, pick one status, and every
-matched device has its Intune Management name set in a single run. Each name
-is matched before anything is written - only names matching exactly one
-device can be ticked - and the current Management name is shown beside the
-new one so you can see what is being replaced. Every row reports its own
-result. See [Bulk Update Asset Status](#bulk-update-asset-status).
-
-**Advanced filter for search (new).** Search is no longer limited to one
-field at a time. **Advanced Filter** builds a multi-column query where each
-rule is a column, an operator and a value, and all rules have to match. Any
-column in the results grid can be filtered, columns with a known set of
-values give a drop-down instead of a text box, and a rule left without a
-value is ignored rather than emptying the results. See
-[Advanced filter](#advanced-filter).
-
-Both are on by default and can be switched off in `ModuleConfig.psd1` -
-`BulkAssetStatus` for the new module. See [Configuration](#configuration).
-
 ## Contents
 
-- [Recent changes](#recent-changes)
 - [Install MSI](#install-msi)
 - [Requirements](#requirements)
 - [Getting started](#getting-started)
@@ -293,37 +271,6 @@ are ticked.
 You then search for and pick the target group. A confirmation naming the group
 and the device count is shown first, and it defaults to No. Results can be
 exported to CSV.
-
-#### Bulk Update Asset Status
-
-The bulk counterpart of [Update Asset Status](#update-asset-status). It sets
-the Intune Management name on many devices at once, from a list of device
-names in a CSV, so a whole shipment or a whole decommission batch is one
-run rather than one window per machine.
-
-Device names are read from the first column of the file - every line is
-read, nothing is skipped - and each one is matched against Intune. Only a
-name that matches exactly **one** managed device can be written to; names
-that match nothing, or match several devices, are listed with the reason
-and cannot be ticked.
-
-The current Management name of every matched device is read from Graph and
-shown in the grid beside the new one, so you can see exactly what is about
-to be replaced before anything is written.
-
-One status is picked for the whole batch, from the same drop-down the
-single-device module uses. Both read the same `AssetStatusValues` list in
-`ModuleConfig.psd1`, so the two can never drift apart, and a value that is
-not on the approved list is refused before anything is written.
-
-A confirmation naming the status and the device count is shown first, and
-it defaults to No. Each row reports its own result as the run proceeds, so
-a partial failure is visible per device rather than as one opaque error.
-Results can be exported to CSV.
-
-> **The Management name is a label only.** Changing it does not retire, wipe
-> or unenrol any device, and it leaves device names, serial numbers, group
-> memberships and assignments untouched.
 
 ### Reporting
 

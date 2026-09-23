@@ -25,13 +25,15 @@
 
         # Bulk Actions
         BulkAddToGroup     = $true   # Add every device in a CSV to one group
+        BulkAssetStatus    = $true   # Set the Management name on many devices from a CSV
 
         # Reporting
         AppDependencyCheck = $true   # Read-only Win32 app dependency report
     }
 
     # -----------------------------------------------------------------------
-    # Asset Status  -  the statuses offered by the Update Asset Status module
+    # Asset Status  -  the statuses offered by the Update Asset Status and
+    #                  Bulk Update Asset Status modules
     #
     # These become the drop-down, in the order listed here, and they are also
     # the approved list: a value that is not on this list is refused before
@@ -41,7 +43,7 @@
     # name of the device, so type it exactly as you want it to appear in the
     # console - 'In-Stock' and 'In Stock' are two different labels.
     #
-    # Delete this whole key, or leave the list empty, to keep the six
+    # Delete this whole key, or leave the list empty, to keep the seven
     # built-in statuses.
     #
     # Reporting elsewhere keys off these strings, so renaming one does NOT
@@ -49,6 +51,7 @@
     # until each one is set again.
     # -----------------------------------------------------------------------
     AssetStatusValues = @(
+        'Assigned'
         'In-Stock'
         'Retired'
         'Recycled'
