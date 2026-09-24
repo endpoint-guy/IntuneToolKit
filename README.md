@@ -352,48 +352,6 @@ exported to CSV.
 > **Read-only.** Every Graph call this module makes is a GET, so it is safe to
 > run against production at any time.
 
-### Local Actions
-
-#### Windows Updates
-
-The odd one out. Every other module talks to Microsoft Graph; this one
-connects to the machine itself over PowerShell Remoting (WinRM) and drives
-the Windows Update Agent on it directly. That means it can do what Graph
-cannot - scan, download and install specific updates on demand, and watch it
-happen - but it also means the machine has to be online, reachable, and you
-need local administrator rights on it.
-
-Selecting a device and opening the module gives you **Test connection**
-first, which checks DNS, WinRM and a remote command in turn and tells you
-which of the three failed rather than just reporting failure.
-
-**Scan** lists every update the machine is offered, with its size,
-classification and whether a reboot is expected. Optional and driver updates
-can be included. From there:
-
-- **Download** fetches the ticked updates without installing anything.
-- **Install** downloads if needed, then installs.
-
-Both write, so both confirm first and both default to No. Progress is shown
-per update - download percentage, install percentage and the result - rather
-than one bar for the whole batch, because a single large update can otherwise
-look like a hung window.
-
-Feature updates (the `23H2`-style version upgrades) do not install through
-the normal path - Windows refuses them with `0x80240022`. The module detects
-them and routes them through the same mechanism Windows Update itself uses,
-polling setup progress until it finishes.
-
-> **Reboots are suppressed by default.** The module sets the no-auto-reboot
-> policy for the duration of the run and puts the original value back
-> afterwards, so an install cannot restart a machine out from under whoever
-> is using it. Tick **Allow reboot** if you want the normal behaviour. Where
-> a reboot is still pending at the end, the module says so rather than
-> acting on it.
-
-> **Requirements:** WinRM reachable on the target and local administrator
-> rights on it. No Graph permissions are used or requested.
-
 ## Configuration
 
 Everything configurable lives in a single optional file, `ModuleConfig.psd1`,
@@ -450,7 +408,6 @@ keeps whatever the script already had.
 | `AssetStatus` | Update Asset Status | Device Actions |
 | `BulkAddToGroup` | Bulk Add to Group | Bulk Actions |
 | `AppDependencyCheck` | App Dependency Check | Reporting |
-| `WindowsUpdates` | Windows Updates | Local Actions |
 
 ### Asset status values
 
@@ -522,12 +479,6 @@ contributes nothing, so a trimmed build asks the tenant for less - see
 | Bulk Add to Group | `DeviceManagementManagedDevices.Read.All`, `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All` |
 | App Dependency Check | `DeviceManagementApps.Read.All` |
 | Update Asset Status | `DeviceManagementManagedDevices.ReadWrite.All` |
-| Windows Updates | *(none - does not use Graph)* |
-
-> **Windows Updates is the exception.** It does not call Graph at all, so it
-> requests no scopes and adds nothing to the consent prompt. Instead it needs
-> PowerShell Remoting (WinRM) to the target machine and local administrator
-> rights on it, because the Windows Update Agent will only run locally.
 
 Duplicates are merged, so a scope already in the base list is not requested
 twice.
