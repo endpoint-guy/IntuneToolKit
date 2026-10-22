@@ -17,10 +17,8 @@
         per-group result summary at the end.
 
 .NOTES
-    SELF-CONTAINED - the WPF XAML is embedded below, so CopyDeviceGroups.xaml
-    is not required at runtime; embedded XAML is used by default
-    when launched from Toolkit.ps1. Pass -XamlPath to load an external
-    CopyDeviceGroups.xaml instead while iterating on the UI.
+    SELF-CONTAINED - the WPF XAML is embedded below, so there is no separate
+    .xaml file to deploy or keep in sync.
 
     Dot-source it from Toolkit.ps1, then call the entry point:
         . "$PSScriptRoot\Modules\CopyDeviceGroups\CopyDeviceGroups.ps1"
@@ -33,14 +31,27 @@
                   Group.ReadWrite.All, GroupMember.ReadWrite.All
 #>
 
-[CmdletBinding()]
-param(
-    # Optional dev override: point at an external CopyDeviceGroups.xaml to
-    # tweak the UI without recompiling. When omitted, the embedded XAML is used.
-    [string]$XamlPath
-)
-
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+# ---------------------------------------------------------------------------
+# Shared dialog and loading overlay. Toolkit.ps1 provides the styled
+# versions; these plain stand-ins are only used if this module is run on its
+# own, outside the toolkit.
+# ---------------------------------------------------------------------------
+if (-not (Get-Command -Name Show-ToolkitMessageBox -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitMessageBox {
+        param([string]$Message = '', [string]$Title = '', [string]$Button = 'OK',
+              [string]$Icon = 'None', [string]$Default = 'None')
+        return [System.Windows.MessageBox]::Show($Message, $Title,
+            [System.Windows.MessageBoxButton]$Button, [System.Windows.MessageBoxImage]$Icon,
+            [System.Windows.MessageBoxResult]$Default)
+    }
+}
+if (-not (Get-Command -Name Show-ToolkitProgress -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitProgress { param($Owner, [string]$Heading, [string]$Text, [string]$Detail) }
+    function Update-ToolkitProgress { param([string]$Text, [string]$Detail) }
+    function Close-ToolkitProgress { }
+}
 
 # ---------------------------------------------------------------------------
 # Row type for the groups grid.
@@ -103,7 +114,7 @@ $CdgXamlString = @'
 
     <Window.Resources>
 
-        <!-- Theme brushes. Kept in sync with MainWindow.xaml so the child -->
+        <!-- Theme brushes. Kept in sync with Toolkit.ps1 so the child     -->
         <!-- window matches the shell even when opened standalone.         -->
         <SolidColorBrush x:Key="WindowBrush"           Color="#1F1F1F"/>
         <SolidColorBrush x:Key="CardBrush"             Color="#2B2B2B"/>
@@ -891,7 +902,6 @@ function Show-CopyDeviceGroupsWindow {
         [Parameter(Mandatory)]$SourceDevice,
         $DeviceCache = @(),
         $Owner       = $null,
-        [string]$XamlPath,
 
         # Reveals the diagnostics console. Off by default - the log is still
         # captured in memory, so ticking it open mid-session shows the
@@ -901,19 +911,14 @@ function Show-CopyDeviceGroupsWindow {
 
     # --- load XAML ---------------------------------------------------------
     $xamlText = $CdgXamlString
-    if ($XamlPath -and (Test-Path $XamlPath)) {
-        $xamlText = Get-Content -Path $XamlPath -Raw
-    }
-
     try {
         [xml]$xamlDoc = $xamlText
         $reader = New-Object System.Xml.XmlNodeReader $xamlDoc
         $win    = [Windows.Markup.XamlReader]::Load($reader)
     }
     catch {
-        [System.Windows.MessageBox]::Show(
-            "The Copy Device Groups XAML could not be loaded:`n`n$($_.Exception.Message)",
-            'XAML load error','OK','Error') | Out-Null
+        Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message (
+            "The Copy Device Groups XAML could not be loaded:`n`n$($_.Exception.Message)") | Out-Null
         return
     }
 
@@ -927,8 +932,7 @@ function Show-CopyDeviceGroupsWindow {
                      'ConsolePanel')) {
         $ctl = $win.FindName($n)
         if ($null -eq $ctl) {
-            [System.Windows.MessageBox]::Show("Control '$n' was not found in the Copy Device Groups XAML.",
-                'XAML load error','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message ("Control '$n' was not found in the Copy Device Groups XAML.") | Out-Null
             return
         }
         $ui[$n] = $ctl
@@ -955,6 +959,7 @@ function Show-CopyDeviceGroupsWindow {
     $setStatus = {
         param([string]$Message)
         $ui.StatusText.Text = $Message
+        Update-ToolkitProgress -Text $Message
         $win.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render)
     }
 
@@ -986,6 +991,8 @@ function Show-CopyDeviceGroupsWindow {
     $setBusy = {
         param([bool]$Busy)
         $state.Busy   = $Busy
+        # Loading overlay with the moving bar over this window while it works.
+        if ($Busy) { Show-ToolkitProgress -Owner $win -Heading 'Copy Device Groups' -Text 'Working...' } else { Close-ToolkitProgress }
         $win.Cursor   = if ($Busy) { [System.Windows.Input.Cursors]::Wait } else { $null }
         foreach ($b in @($ui.BtnCopy, $ui.BtnFindTarget, $ui.BtnReloadGroups,
                          $ui.BtnSelectAll, $ui.BtnSelectNone)) { $b.IsEnabled = -not $Busy }
@@ -1023,7 +1030,7 @@ function Show-CopyDeviceGroupsWindow {
         catch {
             $detail = Write-CdgLogException $_ 'Loading groups'
             & $setStatus "Could not load groups: $detail"
-            [System.Windows.MessageBox]::Show($detail,'Copy Device Groups','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Copy Device Groups' -Button 'OK' -Icon 'Error' -Message $detail | Out-Null
         }
         finally { & $setBusy $false }
     }
@@ -1080,21 +1087,18 @@ function Show-CopyDeviceGroupsWindow {
     # --- copy --------------------------------------------------------------
     $doCopy = {
         if ($null -eq $state.Target) {
-            [System.Windows.MessageBox]::Show('Select a target device first.',
-                'Copy Device Groups','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Copy Device Groups' -Button 'OK' -Icon 'Warning' -Message 'Select a target device first.' | Out-Null
             return
         }
 
         $picked = @($state.Rows | Where-Object { $_.IsEligible -and $_.Selected })
         if ($picked.Count -eq 0) {
-            [System.Windows.MessageBox]::Show('Tick at least one eligible group to copy.',
-                'Copy Device Groups','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Copy Device Groups' -Button 'OK' -Icon 'Warning' -Message 'Tick at least one eligible group to copy.' | Out-Null
             return
         }
 
-        $confirm = [System.Windows.MessageBox]::Show(
-            "Add $($picked.Count) group(s) from`n  $($state.Source.DeviceName)`nto`n  $($state.Target.DisplayName)?`n`nExisting memberships on the target device are left alone - nothing is removed.",
-            'Confirm copy','YesNo','Question')
+        $confirm = Show-ToolkitMessageBox -Title 'Confirm copy' -Button 'YesNo' -Icon 'Question' -Message (
+            "Add $($picked.Count) group(s) from`n  $($state.Source.DeviceName)`nto`n  $($state.Target.DisplayName)?`n`nExisting memberships on the target device are left alone - nothing is removed.")
         if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) { return }
 
         & $setBusy $true
@@ -1124,9 +1128,8 @@ function Show-CopyDeviceGroupsWindow {
         Write-CdgLog $summary $(if ($failed -gt 0) { 'WARN' } else { 'OK' })
 
         $icon = if ($failed -gt 0) { 'Warning' } else { 'Information' }
-        [System.Windows.MessageBox]::Show(
-            "$summary`n`n$($lines -join "`n")",
-            'Copy Device Groups','OK',$icon) | Out-Null
+        Show-ToolkitMessageBox -Title 'Copy Device Groups' -Button 'OK' -Icon $icon -Message (
+            "$summary`n`n$($lines -join "`n")") | Out-Null
     }
 
     # --- events ------------------------------------------------------------
@@ -1246,5 +1249,5 @@ if ($MyInvocation.InvocationName -ne '.') {
     })
 
     if ($src.Count -eq 0) { Write-Warning "No managed device named '$name' was found."; return }
-    Show-CopyDeviceGroupsWindow -SourceDevice $src[0] -XamlPath $XamlPath -ShowConsole
+    Show-CopyDeviceGroupsWindow -SourceDevice $src[0] -ShowConsole
 }

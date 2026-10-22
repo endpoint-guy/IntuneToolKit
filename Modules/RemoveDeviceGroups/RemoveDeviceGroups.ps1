@@ -20,10 +20,8 @@
         into the Result column, with a summary at the end.
 
 .NOTES
-    SELF-CONTAINED - the WPF XAML is embedded below, so RemoveDeviceGroups.xaml
-    is not required at runtime; embedded XAML is used by default
-    when launched from Toolkit.ps1. Pass -XamlPath to load an external
-    RemoveDeviceGroups.xaml instead while iterating on the UI.
+    SELF-CONTAINED - the WPF XAML is embedded below, so there is no separate
+    .xaml file to deploy or keep in sync.
 
     Every function here is Rdg-prefixed on purpose. This module and
     CopyDeviceGroups.ps1 are dot-sourced into the SAME session by Toolkit.ps1,
@@ -40,14 +38,27 @@
                   Group.ReadWrite.All, GroupMember.ReadWrite.All
 #>
 
-[CmdletBinding()]
-param(
-    # Optional dev override: point at an external RemoveDeviceGroups.xaml to
-    # tweak the UI without recompiling. When omitted, the embedded XAML is used.
-    [string]$XamlPath
-)
-
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+# ---------------------------------------------------------------------------
+# Shared dialog and loading overlay. Toolkit.ps1 provides the styled
+# versions; these plain stand-ins are only used if this module is run on its
+# own, outside the toolkit.
+# ---------------------------------------------------------------------------
+if (-not (Get-Command -Name Show-ToolkitMessageBox -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitMessageBox {
+        param([string]$Message = '', [string]$Title = '', [string]$Button = 'OK',
+              [string]$Icon = 'None', [string]$Default = 'None')
+        return [System.Windows.MessageBox]::Show($Message, $Title,
+            [System.Windows.MessageBoxButton]$Button, [System.Windows.MessageBoxImage]$Icon,
+            [System.Windows.MessageBoxResult]$Default)
+    }
+}
+if (-not (Get-Command -Name Show-ToolkitProgress -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitProgress { param($Owner, [string]$Heading, [string]$Text, [string]$Detail) }
+    function Update-ToolkitProgress { param([string]$Text, [string]$Detail) }
+    function Close-ToolkitProgress { }
+}
 
 # ---------------------------------------------------------------------------
 # Row type for the groups grid.
@@ -128,7 +139,7 @@ $RdgXamlString = @'
 
     <Window.Resources>
 
-        <!-- Theme brushes. Kept in sync with MainWindow.xaml so the child -->
+        <!-- Theme brushes. Kept in sync with Toolkit.ps1 so the child     -->
         <!-- window matches the shell even when opened standalone.         -->
         <SolidColorBrush x:Key="WindowBrush"           Color="#1F1F1F"/>
         <SolidColorBrush x:Key="CardBrush"             Color="#2B2B2B"/>
@@ -907,7 +918,6 @@ function Show-RemoveDeviceGroupsWindow {
     param(
         [Parameter(Mandatory)]$Device,
         $Owner = $null,
-        [string]$XamlPath,
 
         # Reveals the diagnostics console. Off by default - the log is still
         # captured in memory, so ticking it open mid-session shows the
@@ -917,19 +927,14 @@ function Show-RemoveDeviceGroupsWindow {
 
     # --- load XAML ---------------------------------------------------------
     $xamlText = $RdgXamlString
-    if ($XamlPath -and (Test-Path $XamlPath)) {
-        $xamlText = Get-Content -Path $XamlPath -Raw
-    }
-
     try {
         [xml]$xamlDoc = $xamlText
         $reader = New-Object System.Xml.XmlNodeReader $xamlDoc
         $win    = [Windows.Markup.XamlReader]::Load($reader)
     }
     catch {
-        [System.Windows.MessageBox]::Show(
-            "The Remove Device Groups XAML could not be loaded:`n`n$($_.Exception.Message)",
-            'XAML load error','OK','Error') | Out-Null
+        Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message (
+            "The Remove Device Groups XAML could not be loaded:`n`n$($_.Exception.Message)") | Out-Null
         return
     }
 
@@ -942,8 +947,7 @@ function Show-RemoveDeviceGroupsWindow {
                      'ConsolePanel')) {
         $ctl = $win.FindName($n)
         if ($null -eq $ctl) {
-            [System.Windows.MessageBox]::Show("Control '$n' was not found in the Remove Device Groups XAML.",
-                'XAML load error','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message ("Control '$n' was not found in the Remove Device Groups XAML.") | Out-Null
             return
         }
         $ui[$n] = $ctl
@@ -966,6 +970,7 @@ function Show-RemoveDeviceGroupsWindow {
     $setStatus = {
         param([string]$Message)
         $ui.StatusText.Text = $Message
+        Update-ToolkitProgress -Text $Message
         $win.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render)
     }
 
@@ -997,6 +1002,8 @@ function Show-RemoveDeviceGroupsWindow {
     $setBusy = {
         param([bool]$Busy)
         $state.Busy = $Busy
+        # Loading overlay with the moving bar over this window while it works.
+        if ($Busy) { Show-ToolkitProgress -Owner $win -Heading 'Remove Device Groups' -Text 'Working...' } else { Close-ToolkitProgress }
         $win.Cursor = if ($Busy) { [System.Windows.Input.Cursors]::Wait } else { $null }
         foreach ($b in @($ui.BtnRemove, $ui.BtnReloadGroups,
                          $ui.BtnSelectAll, $ui.BtnSelectNone)) { $b.IsEnabled = -not $Busy }
@@ -1034,7 +1041,7 @@ function Show-RemoveDeviceGroupsWindow {
         catch {
             $detail = Write-RdgLogException $_ 'Loading groups'
             & $setStatus "Could not load groups: $detail"
-            [System.Windows.MessageBox]::Show($detail,'Remove Device Groups','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Remove Device Groups' -Button 'OK' -Icon 'Error' -Message $detail | Out-Null
         }
         finally { & $setBusy $false }
     }
@@ -1043,8 +1050,7 @@ function Show-RemoveDeviceGroupsWindow {
     $doRemove = {
         $picked = @($state.Rows | Where-Object { $_.IsEligible -and $_.Selected })
         if ($picked.Count -eq 0) {
-            [System.Windows.MessageBox]::Show('Tick at least one eligible group to remove.',
-                'Remove Device Groups','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Remove Device Groups' -Button 'OK' -Icon 'Warning' -Message 'Tick at least one eligible group to remove.' | Out-Null
             return
         }
 
@@ -1055,9 +1061,8 @@ function Show-RemoveDeviceGroupsWindow {
         $names = ($picked | Select-Object -First 15 | ForEach-Object { "  - $($_.DisplayName)" }) -join "`n"
         if ($picked.Count -gt 15) { $names = "$names`n  ... and $($picked.Count - 15) more" }
 
-        $confirm = [System.Windows.MessageBox]::Show(
-            "Remove $deviceName from $($picked.Count) group(s)?`n`n$names`n`nThis takes the device out of those groups in Entra ID. Any policies, apps or configuration targeted at them will stop applying. This CANNOT be undone from here - the memberships would have to be added back by hand.",
-            'Confirm removal','YesNo','Warning',[System.Windows.MessageBoxResult]::No)
+        $confirm = Show-ToolkitMessageBox -Title 'Confirm removal' -Button 'YesNo' -Icon 'Warning' -Default No -Message (
+            "Remove $deviceName from $($picked.Count) group(s)?`n`n$names`n`nThis takes the device out of those groups in Entra ID. Any policies, apps or configuration targeted at them will stop applying. This CANNOT be undone from here - the memberships would have to be added back by hand.")
         if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
             Write-RdgLog 'Removal cancelled at the confirmation prompt.' 'INFO'
             & $setStatus 'Cancelled - nothing was removed.'
@@ -1094,9 +1099,8 @@ function Show-RemoveDeviceGroupsWindow {
         Write-RdgLog $summary $(if ($failed -gt 0) { 'WARN' } else { 'OK' })
 
         $icon = if ($failed -gt 0) { 'Warning' } else { 'Information' }
-        [System.Windows.MessageBox]::Show(
-            "$summary`n`n$($lines -join "`n")",
-            'Remove Device Groups','OK',$icon) | Out-Null
+        Show-ToolkitMessageBox -Title 'Remove Device Groups' -Button 'OK' -Icon $icon -Message (
+            "$summary`n`n$($lines -join "`n")") | Out-Null
 
         # Re-read from Graph so the grid reflects what is actually left.
         if ($removed -gt 0) { & $loadGroups }
@@ -1198,5 +1202,5 @@ if ($MyInvocation.InvocationName -ne '.') {
     })
 
     if ($dev.Count -eq 0) { Write-Warning "No managed device named '$name' was found."; return }
-    Show-RemoveDeviceGroupsWindow -Device $dev[0] -XamlPath $XamlPath -ShowConsole
+    Show-RemoveDeviceGroupsWindow -Device $dev[0] -ShowConsole
 }

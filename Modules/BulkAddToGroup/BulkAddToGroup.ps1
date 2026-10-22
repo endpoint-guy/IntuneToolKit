@@ -26,10 +26,8 @@
         exported to CSV.
 
 .NOTES
-    SELF-CONTAINED - the WPF XAML is embedded below, so BulkAddToGroup.xaml
-    is not required at runtime; embedded XAML is used by default
-    when launched from Toolkit.ps1. Pass -XamlPath to load an external
-    BulkAddToGroup.xaml instead while iterating on the UI.
+    SELF-CONTAINED - the WPF XAML is embedded below, so there is no separate
+    .xaml file to deploy or keep in sync.
 
     Every function here is Bag-prefixed on purpose. This module,
     CopyDeviceGroups.ps1 and RemoveDeviceGroups.ps1 are dot-sourced into the
@@ -47,14 +45,27 @@
                   GroupMember.ReadWrite.All
 #>
 
-[CmdletBinding()]
-param(
-    # Optional dev override: point at an external BulkAddToGroup.xaml to
-    # tweak the UI without recompiling. When omitted, the embedded XAML is used.
-    [string]$XamlPath
-)
-
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+# ---------------------------------------------------------------------------
+# Shared dialog and loading overlay. Toolkit.ps1 provides the styled
+# versions; these plain stand-ins are only used if this module is run on its
+# own, outside the toolkit.
+# ---------------------------------------------------------------------------
+if (-not (Get-Command -Name Show-ToolkitMessageBox -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitMessageBox {
+        param([string]$Message = '', [string]$Title = '', [string]$Button = 'OK',
+              [string]$Icon = 'None', [string]$Default = 'None')
+        return [System.Windows.MessageBox]::Show($Message, $Title,
+            [System.Windows.MessageBoxButton]$Button, [System.Windows.MessageBoxImage]$Icon,
+            [System.Windows.MessageBoxResult]$Default)
+    }
+}
+if (-not (Get-Command -Name Show-ToolkitProgress -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitProgress { param($Owner, [string]$Heading, [string]$Text, [string]$Detail) }
+    function Update-ToolkitProgress { param([string]$Text, [string]$Detail) }
+    function Close-ToolkitProgress { }
+}
 
 # ---------------------------------------------------------------------------
 # Row types for the two grids.
@@ -149,7 +160,7 @@ $BagXamlString = @'
 
     <Window.Resources>
 
-        <!-- Theme brushes. Kept in sync with MainWindow.xaml so the child -->
+        <!-- Theme brushes. Kept in sync with Toolkit.ps1 so the child     -->
         <!-- window matches the shell even when opened standalone.         -->
         <SolidColorBrush x:Key="WindowBrush"           Color="#1F1F1F"/>
         <SolidColorBrush x:Key="CardBrush"             Color="#2B2B2B"/>
@@ -1207,25 +1218,19 @@ function Show-BulkAddToGroupWindow {
     param(
         $DeviceCache = @(),
         $Owner = $null,
-        [string]$CsvPath,
-        [string]$XamlPath
+        [string]$CsvPath
     )
 
     # --- load XAML ---------------------------------------------------------
     $xamlText = $BagXamlString
-    if ($XamlPath -and (Test-Path $XamlPath)) {
-        $xamlText = Get-Content -Path $XamlPath -Raw
-    }
-
     try {
         [xml]$xamlDoc = $xamlText
         $reader = New-Object System.Xml.XmlNodeReader $xamlDoc
         $win    = [Windows.Markup.XamlReader]::Load($reader)
     }
     catch {
-        [System.Windows.MessageBox]::Show(
-            "The Bulk Add to Group XAML could not be loaded:`n`n$($_.Exception.Message)",
-            'XAML load error','OK','Error') | Out-Null
+        Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message (
+            "The Bulk Add to Group XAML could not be loaded:`n`n$($_.Exception.Message)") | Out-Null
         return
     }
 
@@ -1237,8 +1242,7 @@ function Show-BulkAddToGroupWindow {
                      'StatusText','BtnAdd','BtnClose')) {
         $ctl = $win.FindName($n)
         if ($null -eq $ctl) {
-            [System.Windows.MessageBox]::Show("Control '$n' was not found in the Bulk Add to Group XAML.",
-                'XAML load error','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message ("Control '$n' was not found in the Bulk Add to Group XAML.") | Out-Null
             return
         }
         $ui[$n] = $ctl
@@ -1264,12 +1268,15 @@ function Show-BulkAddToGroupWindow {
     $setStatus = {
         param([string]$Message)
         $ui.StatusText.Text = $Message
+        Update-ToolkitProgress -Text $Message
         $win.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render) | Out-Null
     }
 
     $setBusy = {
         param([bool]$Busy)
         $state.Busy = $Busy
+        # Loading overlay with the moving bar over this window while it works.
+        if ($Busy) { Show-ToolkitProgress -Owner $win -Heading 'Bulk Add to Group' -Text 'Working...' } else { Close-ToolkitProgress }
         $win.Cursor = if ($Busy) { [System.Windows.Input.Cursors]::Wait } else { $null }
         foreach ($b in @($ui.BtnAdd, $ui.BtnBrowseCsv, $ui.BtnReloadCsv, $ui.BtnSearchGroups,
                          $ui.BtnSelectAll, $ui.BtnSelectNone)) { $b.IsEnabled = -not $Busy }
@@ -1318,7 +1325,7 @@ function Show-BulkAddToGroupWindow {
             $ui.TxtCsvSummary.Text = 'No file loaded'
             $detail = Write-BagLogException $_ 'Reading the device list'
             & $setStatus "Could not read the file: $detail"
-            [System.Windows.MessageBox]::Show($detail,'Bulk Add to Group','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Bulk Add to Group' -Button 'OK' -Icon 'Error' -Message $detail | Out-Null
         }
         finally { & $setBusy $false }
     }
@@ -1327,8 +1334,7 @@ function Show-BulkAddToGroupWindow {
     $searchGroups = {
         $term = $ui.TxtGroupSearch.Text
         if ([string]::IsNullOrWhiteSpace($term)) {
-            [System.Windows.MessageBox]::Show('Type part of a group name to search for.',
-                'Bulk Add to Group','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Bulk Add to Group' -Button 'OK' -Icon 'Warning' -Message 'Type part of a group name to search for.' | Out-Null
             return
         }
 
@@ -1349,7 +1355,7 @@ function Show-BulkAddToGroupWindow {
         catch {
             $detail = Write-BagLogException $_ 'Group search'
             & $setStatus "Group search failed: $detail"
-            [System.Windows.MessageBox]::Show($detail,'Bulk Add to Group','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Bulk Add to Group' -Button 'OK' -Icon 'Error' -Message $detail | Out-Null
         }
         finally { & $setBusy $false }
     }
@@ -1357,15 +1363,13 @@ function Show-BulkAddToGroupWindow {
     # --- add ---------------------------------------------------------------
     $doAdd = {
         if ($null -eq $state.Group) {
-            [System.Windows.MessageBox]::Show('Search for a group and pick an eligible one first.',
-                'Bulk Add to Group','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Bulk Add to Group' -Button 'OK' -Icon 'Warning' -Message 'Search for a group and pick an eligible one first.' | Out-Null
             return
         }
 
         $picked = @($state.Rows | Where-Object { $_.IsEligible -and $_.Selected })
         if ($picked.Count -eq 0) {
-            [System.Windows.MessageBox]::Show('Tick at least one matched device to add.',
-                'Bulk Add to Group','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Bulk Add to Group' -Button 'OK' -Icon 'Warning' -Message 'Tick at least one matched device to add.' | Out-Null
             return
         }
 
@@ -1377,9 +1381,8 @@ function Show-BulkAddToGroupWindow {
         $names = ($picked | Select-Object -First 15 | ForEach-Object { "  - $($_.DeviceName)" }) -join "`n"
         if ($picked.Count -gt 15) { $names = "$names`n  ... and $($picked.Count - 15) more" }
 
-        $confirm = [System.Windows.MessageBox]::Show(
-            "Add $($picked.Count) device(s) to '$groupName'?`n`n$names`n`nAny policies, apps or configuration targeted at that group will start applying to these devices.",
-            'Confirm bulk add','YesNo','Warning',[System.Windows.MessageBoxResult]::No)
+        $confirm = Show-ToolkitMessageBox -Title 'Confirm bulk add' -Button 'YesNo' -Icon 'Warning' -Default No -Message (
+            "Add $($picked.Count) device(s) to '$groupName'?`n`n$names`n`nAny policies, apps or configuration targeted at that group will start applying to these devices.")
         if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
             Write-BagLog 'Bulk add cancelled at the confirmation prompt.' 'INFO'
             & $setStatus 'Cancelled - nothing was added.'
@@ -1419,9 +1422,8 @@ function Show-BulkAddToGroupWindow {
         if ($lines.Count -gt 25) { $shown = "$shown`n... and $($lines.Count - 25) more - use Export results for the full list." }
 
         $icon = if ($failed -gt 0) { 'Warning' } else { 'Information' }
-        [System.Windows.MessageBox]::Show(
-            "$summary`n`n$shown",
-            'Bulk Add to Group','OK',$icon) | Out-Null
+        Show-ToolkitMessageBox -Title 'Bulk Add to Group' -Button 'OK' -Icon $icon -Message (
+            "$summary`n`n$shown") | Out-Null
     }
 
     # --- events ------------------------------------------------------------
@@ -1508,5 +1510,305 @@ if ($MyInvocation.InvocationName -ne '.') {
     Connect-MgGraph -Scopes 'Device.Read.All','Group.Read.All','Group.ReadWrite.All',
                             'GroupMember.ReadWrite.All','DeviceManagementManagedDevices.Read.All' -NoWelcome
 
-    Show-BulkAddToGroupWindow -XamlPath $XamlPath
+    Show-BulkAddToGroupWindow
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

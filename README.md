@@ -18,34 +18,42 @@ design decisions, testing, and the day-to-day admin experience behind it are
 mine; a lot of the code was written with AI help.
 
 <!-- Screenshot: main window with search results and the Device Actions panel. -->
+
 ![EndpointGuy Intune Toolkit - main window](IntuneToolkit.png)
 
 ## Recent changes
 
-**Bulk Update Asset Status (new module).** The Asset Status module now has a
-bulk counterpart. Feed it a CSV of device names, pick one status, and every
-matched device has its Intune Management name set in a single run. Each name
-is matched before anything is written - only names matching exactly one
-device can be ticked - and the current Management name is shown beside the
-new one so you can see what is being replaced. Every row reports its own
-result. See [Bulk Update Asset Status](#bulk-update-asset-status).
+**Device Prep Check.** 
 
-**Advanced filter for search (new).** Search is no longer limited to one
-field at a time. **Advanced Filter** builds a multi-column query where each
-rule is a column, an operator and a value, and all rules have to match. Any
-column in the results grid can be filtered, columns with a known set of
-values give a drop-down instead of a text box, and a rule left without a
-value is ignored rather than emptying the results. See
-[Advanced filter](#advanced-filter).
+A new module that allows you to check if a device is ready for the Autopilot process. You can search for a serial number and the module will determine if the hardware hash is already imported to Intune, if it is enabled in Entra ID, and if there is already an existing device enrolled into Intune.
 
-**Embedded XAML - `.xaml` files removed.** Every module's WPF interface is
-now baked into its `.ps1` file, so the standalone `.xaml` files are no
-longer used and have been removed from the toolkit. Nothing needs doing if
-you are updating an existing copy - delete any leftover `.xaml` files, as
-they are read by nothing.
+**Open devices in Intune.**
+You can now open a devices Intune device page directly from the search results by clicking on the hyperlinked Intune button under the source column
 
-Both are on by default and can be switched off in `ModuleConfig.psd1` -
-`BulkAssetStatus` for the new module. See [Configuration](#configuration).
+**Refreshed interface.**
+
+Several improvements have been made to the GUI in preparation for adding more features in the future. Also added loading animations throughout, so it is clear when the toolkit is working rather than frozen. 
+
+**Connects and loads on launch.** 
+
+When the toolkit starts, it prompts for graph authentication right away. After authenticating, it loads the Intune devices and autopilot hardware hashes right away. 
+
+**Silent launcher - `Launch-Toolkit.vbs`.** The toolkit now launches through
+`Launch-Toolkit.vbs` instead of starting `powershell.exe` directly from the
+shortcut. PowerShell is a console application, so even `-WindowStyle Hidden`
+can briefly show a PowerShell window or leave it visible on the taskbar before
+the WPF interface opens. The VBScript launcher starts PowerShell hidden from
+the beginning, so only the EndpointGuy Intune Toolkit window appears.
+
+The installed shortcut should target:
+
+```
+C:\Windows\System32\wscript.exe "C:\Program Files\Endpoint Guy\Intune Toolkit\Launch-Toolkit.vbs"
+```
+
+`Launch-Toolkit.vbs` must be installed beside `Toolkit.ps1`. Use
+`Run-Toolkit.bat` when troubleshooting, because the silent launcher does not
+provide a visible console for startup errors.
 
 ## Contents
 
@@ -81,13 +89,13 @@ managed.
 
 ## Requirements
 
-| | |
-|---|---|
-| Operating system | Windows 10 or Windows 11 |
-| PowerShell | Windows PowerShell 5.1 (ships with Windows - nothing to install) |
+|                   |                                                                              |
+| ----------------- | ---------------------------------------------------------------------------- |
+| Operating system  | Windows 10 or Windows 11                                                     |
+| PowerShell        | Windows PowerShell 5.1 (ships with Windows - nothing to install)             |
 | PowerShell module | `Microsoft.Graph.Authentication` - installed automatically on first launch |
-| Account | An Entra ID account with the Intune rights for the actions you intend to use |
-| Network | Access to Microsoft Graph, plus the PowerShell Gallery on first launch only |
+| Account           | An Entra ID account with the Intune rights for the actions you intend to use |
+| Network           | Access to Microsoft Graph, plus the PowerShell Gallery on first launch only  |
 
 No local administrator rights are needed to run the toolkit. The Graph module
 is installed for the current user only. Installing the MSI does require admin
@@ -135,10 +143,10 @@ consent to the permissions the toolkit needs.
 
 The indicator beside the button shows where you stand:
 
-| Indicator | Meaning |
-|---|---|
-| **Not connected** (red) | Sign in before doing anything else |
-| **Connected** (green) | Shows the signed-in account; the button becomes **Reconnect** |
+| Indicator                     | Meaning                                                             |
+| ----------------------------- | ------------------------------------------------------------------- |
+| **Not connected** (red) | Sign in before doing anything else                                  |
+| **Connected** (green)   | Shows the signed-in account; the button becomes **Reconnect** |
 
 Nothing is cached between sessions - you sign in each time the toolkit starts.
 
@@ -176,8 +184,7 @@ one field at a time. Each rule is a column, an operator and a value, and
 **all** rules have to match, so rules narrow the list as you add them.
 
 Use **+ Add rule** for another condition, the red **−** to drop one, and
-**Clear** to start again. For example, two rules - `Device Name starts with
-TC1US` and `Management Name equals In-Stock` - return only the in-stock
+**Clear** to start again. For example, two rules - `Device Name starts with TC1US` and `Management Name equals In-Stock` - return only the in-stock
 devices at that site prefix.
 
 Operators: *contains*, *does not contain*, *starts with*, *ends with*,
@@ -191,12 +198,12 @@ Manufacturer, Category, Last Sync and Source.
 Columns with a known set of values give you a drop-down rather than a text
 box, so they cannot be mistyped:
 
-| Column | Values |
-| --- | --- |
-| Management Name | the Asset Status lifecycle labels |
-| Compliance | compliant, noncompliant, conflict, error, inGracePeriod, unknown |
-| Ownership | company, personal, unknown |
-| Source | Intune, Autopilot |
+| Column          | Values                                                           |
+| --------------- | ---------------------------------------------------------------- |
+| Management Name | the Asset Status lifecycle labels                                |
+| Compliance      | compliant, noncompliant, conflict, error, inGracePeriod, unknown |
+| Ownership       | company, personal, unknown                                       |
+| Source          | Intune, Autopilot                                                |
 
 Everything else takes free text. Matching ignores case throughout, and `*`,
 `?` or `[` in a value are matched literally rather than as wildcards.
@@ -352,7 +359,44 @@ exported to CSV.
 > **Read-only.** Every Graph call this module makes is a GET, so it is safe to
 > run against production at any time.
 
+#### Device Prep Check
+
+Checks whether a device is ready for Windows Autopilot provisioning from
+its serial number. The serial number is filled in from the selected device,
+but it can be edited to check any other machine.
+
+The module verifies three things: the Windows Autopilot hardware hash has
+been imported, the linked Entra ID device exists and is enabled, and no
+existing Intune managed-device record is blocking a clean enrollment. Each
+check shows and explains what was found, and identifies what
+needs attention; an overall **Ready** or **Not ready** banner summarizes the
+result.
+
+A disabled Entra ID device can be enabled from the window after a
+confirmation that defaults to No. An existing Intune record can be opened
+in the Intune admin center for review, but the module never wipes or deletes
+anything. It also lists the device's Entra ID group memberships for
+reference, and **Recheck** runs all three checks again after an issue is
+resolved.
+
 ## Configuration
+
+### Configuration wizard
+
+The easiest way to change the toolkit configuration is to run
+`Run-Configure-Toolkit.bat` from the toolkit folder. It opens a graphical
+configuration wizard where you can enable or disable modules, edit the
+approved asset status values, and customize the toolkit name, website text,
+website URL and logo without editing PowerShell by hand.
+
+When you finish, the wizard writes the selected settings to
+`ModuleConfig.psd1` beside `Toolkit.ps1`. Branding images selected in the
+wizard are copied into the toolkit folder so the configuration continues to
+work when the folder is moved or packaged. Restart the toolkit after saving
+for the new settings to take effect.
+
+You can still edit `ModuleConfig.psd1` directly if you prefer; the settings
+and examples below describe the same configuration file used by the wizard.
 
 Everything configurable lives in a single optional file, `ModuleConfig.psd1`,
 sitting next to `Toolkit.ps1`. It overrides the settings baked into the
@@ -401,13 +445,13 @@ The key names are fixed - they must match exactly, as below. A key that is
 misspelled is ignored silently rather than reported, so the module simply
 keeps whatever the script already had.
 
-| Key | Button | Section |
-| --- | --- | --- |
-| `CopyDeviceGroups` | Copy Device Groups | Device Actions |
+| Key                    | Button               | Section        |
+| ---------------------- | -------------------- | -------------- |
+| `CopyDeviceGroups`   | Copy Device Groups   | Device Actions |
 | `RemoveDeviceGroups` | Remove Device Groups | Device Actions |
-| `AssetStatus` | Update Asset Status | Device Actions |
-| `BulkAddToGroup` | Bulk Add to Group | Bulk Actions |
-| `AppDependencyCheck` | App Dependency Check | Reporting |
+| `AssetStatus`        | Update Asset Status  | Device Actions |
+| `BulkAddToGroup`     | Bulk Add to Group    | Bulk Actions   |
+| `AppDependencyCheck` | App Dependency Check | Reporting      |
 
 ### Asset status values
 
@@ -458,13 +502,13 @@ request goes to an administrator.
 These cover the shell itself - device search, the local cache and the details
 shown in the results grid.
 
-| Scope | Why |
-| --- | --- |
-| `DeviceManagementManagedDevices.ReadWrite.All` | Read Intune devices, and set the Management name |
-| `DeviceManagementConfiguration.Read.All` | Read configuration data |
-| `Device.Read.All` | Read the Entra device records behind each machine |
-| `User.Read.All` | Resolve primary users for search and display |
-| `DeviceManagementServiceConfig.Read.All` | Read Autopilot records, so imported but not yet enrolled devices appear |
+| Scope                                            | Why                                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------------------- |
+| `DeviceManagementManagedDevices.ReadWrite.All` | Read Intune devices, and set the Management name                        |
+| `DeviceManagementConfiguration.Read.All`       | Read configuration data                                                 |
+| `Device.Read.All`                              | Read the Entra device records behind each machine                       |
+| `User.Read.All`                                | Resolve primary users for search and display                            |
+| `DeviceManagementServiceConfig.Read.All`       | Read Autopilot records, so imported but not yet enrolled devices appear |
 
 ### Requested per module
 
@@ -472,13 +516,13 @@ Each enabled module adds its own scopes on top. A module that is switched off
 contributes nothing, so a trimmed build asks the tenant for less - see
 [Configuration](#configuration).
 
-| Module | Additional scopes |
-| --- | --- |
-| Copy Device Groups | `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All` |
-| Remove Device Groups | `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All` |
-| Bulk Add to Group | `DeviceManagementManagedDevices.Read.All`, `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All` |
-| App Dependency Check | `DeviceManagementApps.Read.All` |
-| Update Asset Status | `DeviceManagementManagedDevices.ReadWrite.All` |
+| Module               | Additional scopes                                                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Copy Device Groups   | `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All`                                              |
+| Remove Device Groups | `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All`                                              |
+| Bulk Add to Group    | `DeviceManagementManagedDevices.Read.All`, `Device.Read.All`, `Group.Read.All`, `Group.ReadWrite.All`, `GroupMember.ReadWrite.All` |
+| App Dependency Check | `DeviceManagementApps.Read.All`                                                                                                            |
+| Update Asset Status  | `DeviceManagementManagedDevices.ReadWrite.All`                                                                                             |
 
 Duplicates are merged, so a scope already in the base list is not requested
 twice.

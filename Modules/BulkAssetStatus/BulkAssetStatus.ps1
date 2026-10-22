@@ -52,6 +52,26 @@
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 
 # ---------------------------------------------------------------------------
+# Shared dialog and loading overlay. Toolkit.ps1 provides the styled
+# versions; these plain stand-ins are only used if this module is run on its
+# own, outside the toolkit.
+# ---------------------------------------------------------------------------
+if (-not (Get-Command -Name Show-ToolkitMessageBox -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitMessageBox {
+        param([string]$Message = '', [string]$Title = '', [string]$Button = 'OK',
+              [string]$Icon = 'None', [string]$Default = 'None')
+        return [System.Windows.MessageBox]::Show($Message, $Title,
+            [System.Windows.MessageBoxButton]$Button, [System.Windows.MessageBoxImage]$Icon,
+            [System.Windows.MessageBoxResult]$Default)
+    }
+}
+if (-not (Get-Command -Name Show-ToolkitProgress -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitProgress { param($Owner, [string]$Heading, [string]$Text, [string]$Detail) }
+    function Update-ToolkitProgress { param([string]$Text, [string]$Detail) }
+    function Close-ToolkitProgress { }
+}
+
+# ---------------------------------------------------------------------------
 # The statuses this module is allowed to write.
 #
 # Deliberately the SAME source as the single-device Asset Status module:
@@ -1084,9 +1104,8 @@ function Show-BulkAssetStatusWindow {
         $win    = [Windows.Markup.XamlReader]::Load($reader)
     }
     catch {
-        [System.Windows.MessageBox]::Show(
-            "The Bulk Update Asset Status XAML could not be loaded:`n`n$($_.Exception.Message)",
-            'XAML load error','OK','Error') | Out-Null
+        Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message (
+            "The Bulk Update Asset Status XAML could not be loaded:`n`n$($_.Exception.Message)") | Out-Null
         return
     }
 
@@ -1098,8 +1117,7 @@ function Show-BulkAssetStatusWindow {
                      'BtnSelectHighlighted','StatusText','BtnApply','BtnClose')) {
         $ctl = $win.FindName($n)
         if ($null -eq $ctl) {
-            [System.Windows.MessageBox]::Show("Control '$n' was not found in the Bulk Update Asset Status XAML.",
-                'XAML load error','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message ("Control '$n' was not found in the Bulk Update Asset Status XAML.") | Out-Null
             return
         }
         $ui[$n] = $ctl
@@ -1122,12 +1140,15 @@ function Show-BulkAssetStatusWindow {
     $setStatus = {
         param([string]$Message)
         $ui.StatusText.Text = $Message
+        Update-ToolkitProgress -Text $Message
         $win.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render) | Out-Null
     }
 
     $setBusy = {
         param([bool]$Busy)
         $state.Busy = $Busy
+        # Loading overlay with the moving bar over this window while it works.
+        if ($Busy) { Show-ToolkitProgress -Owner $win -Heading 'Bulk Update Asset Status' -Text 'Working...' } else { Close-ToolkitProgress }
         $win.Cursor = if ($Busy) { [System.Windows.Input.Cursors]::Wait } else { $null }
         foreach ($b in @($ui.BtnApply, $ui.BtnBrowseCsv, $ui.BtnReloadCsv,
                          $ui.BtnSelectAll, $ui.BtnSelectNone, $ui.BtnSelectHighlighted)) {
@@ -1235,7 +1256,7 @@ function Show-BulkAssetStatusWindow {
             $ui.TxtCsvSummary.Text = 'No file loaded'
             $detail = Write-BasLogException $_ 'Reading the device list'
             & $setStatus "Could not read the file: $detail"
-            [System.Windows.MessageBox]::Show($detail,'Bulk Update Asset Status','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Bulk Update Asset Status' -Button 'OK' -Icon 'Error' -Message $detail | Out-Null
         }
         finally { & $setBusy $false }
     }
@@ -1244,24 +1265,21 @@ function Show-BulkAssetStatusWindow {
     $doApply = {
         $status = & $getStatus
         if ([string]::IsNullOrWhiteSpace($status)) {
-            [System.Windows.MessageBox]::Show('Pick the status to apply first.',
-                'Bulk Update Asset Status','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Bulk Update Asset Status' -Button 'OK' -Icon 'Warning' -Message 'Pick the status to apply first.' | Out-Null
             return
         }
 
         # The approved list is checked again here, not just when the drop-down
         # was built, so nothing outside the list can reach Graph.
         if ($Script:BasStatuses -notcontains $status) {
-            [System.Windows.MessageBox]::Show(
-                "'$status' is not one of the approved statuses, so it will not be written.",
-                'Bulk Update Asset Status','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Bulk Update Asset Status' -Button 'OK' -Icon 'Error' -Message (
+                "'$status' is not one of the approved statuses, so it will not be written.") | Out-Null
             return
         }
 
         $picked = @($state.Rows | Where-Object { $_.IsEligible -and $_.Selected })
         if ($picked.Count -eq 0) {
-            [System.Windows.MessageBox]::Show('Tick at least one matched device to set.',
-                'Bulk Update Asset Status','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Bulk Update Asset Status' -Button 'OK' -Icon 'Warning' -Message 'Tick at least one matched device to set.' | Out-Null
             return
         }
 
@@ -1271,9 +1289,8 @@ function Show-BulkAssetStatusWindow {
                   ForEach-Object { "  - $($_.DeviceName)  [$($_.CurrentName)]" }) -join "`n"
         if ($picked.Count -gt 15) { $names = "$names`n  ... and $($picked.Count - 15) more" }
 
-        $confirm = [System.Windows.MessageBox]::Show(
-            "Set the Intune Management name of $($picked.Count) device(s) to '$status'?`n`n$names`n`nThe name each device carries today is shown in brackets and will be replaced. This is a label only - no device is retired, wiped or unenrolled.",
-            'Confirm bulk status update','YesNo','Warning',[System.Windows.MessageBoxResult]::No)
+        $confirm = Show-ToolkitMessageBox -Title 'Confirm bulk status update' -Button 'YesNo' -Icon 'Warning' -Default No -Message (
+            "Set the Intune Management name of $($picked.Count) device(s) to '$status'?`n`n$names`n`nThe name each device carries today is shown in brackets and will be replaced. This is a label only - no device is retired, wiped or unenrolled.")
         if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
             Write-BasLog 'Bulk status update cancelled at the confirmation prompt.' 'INFO'
             & $setStatus 'Cancelled - nothing was changed.'
@@ -1314,9 +1331,8 @@ function Show-BulkAssetStatusWindow {
         if ($lines.Count -gt 25) { $shown = "$shown`n... and $($lines.Count - 25) more - see the grid for the full list." }
 
         $icon = if ($failed -gt 0) { 'Warning' } else { 'Information' }
-        [System.Windows.MessageBox]::Show(
-            "$summary`n`n$shown",
-            'Bulk Update Asset Status','OK',$icon) | Out-Null
+        Show-ToolkitMessageBox -Title 'Bulk Update Asset Status' -Button 'OK' -Icon $icon -Message (
+            "$summary`n`n$shown") | Out-Null
     }
 
     # --- events ------------------------------------------------------------

@@ -4,9 +4,9 @@
 
 .DESCRIPTION
     Opens a window that sets the Intune Management name (managedDeviceName)
-    of the selected managed device to one of six lifecycle statuses:
+    of the selected managed device to one of seven lifecycle statuses:
 
-        In-Stock, Retired, Recycled, Stolen, Legalhold, Lost
+        Assigned, In-Stock, Retired, Recycled, Stolen, Legalhold, Lost
 
       - The device is passed in from the Toolkit (the device selected in the
         search results) and is pre-filled in the window.
@@ -24,10 +24,8 @@
     serial number, group memberships and assignments untouched.
 
 .NOTES
-    SELF-CONTAINED - the WPF XAML is embedded below, so AssetStatus.xaml
-    is not required at runtime; embedded XAML is used by default
-    when launched from Toolkit.ps1. Pass -XamlPath to load an external
-    AssetStatus.xaml instead while iterating on the UI.
+    SELF-CONTAINED - the WPF XAML is embedded below, so there is no separate
+    .xaml file to deploy or keep in sync.
 
     Every function here is Ast-prefixed on purpose. This module,
     CopyDeviceGroups.ps1, RemoveDeviceGroups.ps1, BulkAddToGroup.ps1 and
@@ -44,14 +42,27 @@
     Graph scopes: DeviceManagementManagedDevices.ReadWrite.All
 #>
 
-[CmdletBinding()]
-param(
-    # Optional dev override: point at an external AssetStatus.xaml to
-    # tweak the UI without recompiling. When omitted, the embedded XAML is used.
-    [string]$XamlPath
-)
-
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+
+# ---------------------------------------------------------------------------
+# Shared dialog and loading overlay. Toolkit.ps1 provides the styled
+# versions; these plain stand-ins are only used if this module is run on its
+# own, outside the toolkit.
+# ---------------------------------------------------------------------------
+if (-not (Get-Command -Name Show-ToolkitMessageBox -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitMessageBox {
+        param([string]$Message = '', [string]$Title = '', [string]$Button = 'OK',
+              [string]$Icon = 'None', [string]$Default = 'None')
+        return [System.Windows.MessageBox]::Show($Message, $Title,
+            [System.Windows.MessageBoxButton]$Button, [System.Windows.MessageBoxImage]$Icon,
+            [System.Windows.MessageBoxResult]$Default)
+    }
+}
+if (-not (Get-Command -Name Show-ToolkitProgress -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitProgress { param($Owner, [string]$Heading, [string]$Text, [string]$Detail) }
+    function Update-ToolkitProgress { param([string]$Text, [string]$Detail) }
+    function Close-ToolkitProgress { }
+}
 
 # ---------------------------------------------------------------------------
 # The statuses this module is allowed to write.
@@ -62,9 +73,9 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 #
 # Toolkit.ps1 sets $Script:AssetStatusValues from ModuleConfig.psd1 before
 # dot-sourcing this file. When that is absent - or when this module is run
-# standalone - the six built-in statuses below are used.
+# standalone - the seven built-in statuses below are used.
 # ---------------------------------------------------------------------------
-$AstDefaultStatuses = @('In-Stock','Retired','Recycled','Stolen','Legalhold','Lost')
+$AstDefaultStatuses = @('Assigned','In-Stock','Retired','Recycled','Stolen','Legalhold','Lost')
 
 $Script:AstStatuses = $AstDefaultStatuses
 
@@ -96,7 +107,7 @@ $AstXamlString = @'
 
     <Window.Resources>
 
-        <!-- Theme brushes. Kept in sync with MainWindow.xaml so the child -->
+        <!-- Theme brushes. Kept in sync with Toolkit.ps1 so the child     -->
         <!-- window matches the shell even when opened standalone.         -->
         <SolidColorBrush x:Key="WindowBrush"           Color="#1F1F1F"/>
         <SolidColorBrush x:Key="CardBrush"             Color="#2B2B2B"/>
@@ -736,7 +747,6 @@ function Show-AssetStatusWindow {
     param(
         [Parameter(Mandatory)]$Device,
         $Owner = $null,
-        [string]$XamlPath,
 
         # Reveals the diagnostics console. Off by default - the log is still
         # captured in memory, so ticking it open mid-session shows the
@@ -746,19 +756,14 @@ function Show-AssetStatusWindow {
 
     # --- load XAML ---------------------------------------------------------
     $xamlText = $AstXamlString
-    if ($XamlPath -and (Test-Path $XamlPath)) {
-        $xamlText = Get-Content -Path $XamlPath -Raw
-    }
-
     try {
         [xml]$xamlDoc = $xamlText
         $reader = New-Object System.Xml.XmlNodeReader $xamlDoc
         $win    = [Windows.Markup.XamlReader]::Load($reader)
     }
     catch {
-        [System.Windows.MessageBox]::Show(
-            "The Asset Status XAML could not be loaded:`n`n$($_.Exception.Message)",
-            'XAML load error','OK','Error') | Out-Null
+        Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message (
+            "The Asset Status XAML could not be loaded:`n`n$($_.Exception.Message)") | Out-Null
         return
     }
 
@@ -770,8 +775,7 @@ function Show-AssetStatusWindow {
                      'ConsolePanel')) {
         $ctl = $win.FindName($n)
         if ($null -eq $ctl) {
-            [System.Windows.MessageBox]::Show("Control '$n' was not found in the Asset Status XAML.",
-                'XAML load error','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message ("Control '$n' was not found in the Asset Status XAML.") | Out-Null
             return
         }
         $ui[$n] = $ctl
@@ -791,6 +795,7 @@ function Show-AssetStatusWindow {
     $setStatus = {
         param([string]$Message)
         $ui.StatusText.Text = $Message
+        Update-ToolkitProgress -Text $Message
         $win.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render)
     }
 
@@ -822,6 +827,8 @@ function Show-AssetStatusWindow {
     $setBusy = {
         param([bool]$Busy)
         $state.Busy = $Busy
+        # Loading overlay with the moving bar over this window while it works.
+        if ($Busy) { Show-ToolkitProgress -Owner $win -Heading 'Asset Status' -Text 'Working...' } else { Close-ToolkitProgress }
         $win.Cursor = if ($Busy) { [System.Windows.Input.Cursors]::Wait } else { $null }
         foreach ($b in @($ui.BtnApply, $ui.BtnReload)) { $b.IsEnabled = -not $Busy }
         $ui.CmbStatus.IsEnabled = -not $Busy
@@ -873,7 +880,7 @@ function Show-AssetStatusWindow {
             $detail = Write-AstLogException $_ 'Loading the device'
             & $setStatus "Could not load the device: $detail"
             $ui.TxtCurrentName.Text = ''
-            [System.Windows.MessageBox]::Show($detail,'Asset Status','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Asset Status' -Button 'OK' -Icon 'Error' -Message $detail | Out-Null
         }
         finally { & $setBusy $false }
     }
@@ -882,22 +889,19 @@ function Show-AssetStatusWindow {
     $doApply = {
         $status = & $getStatus
         if ([string]::IsNullOrWhiteSpace($status)) {
-            [System.Windows.MessageBox]::Show('Pick a status first.',
-                'Asset Status','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Asset Status' -Button 'OK' -Icon 'Warning' -Message 'Pick a status first.' | Out-Null
             return
         }
 
         # Belt and braces: the drop-down is fixed, but a status that is not on
         # the approved list must never reach Graph.
         if ($Script:AstStatuses -notcontains $status) {
-            [System.Windows.MessageBox]::Show("'$status' is not one of the allowed statuses.",
-                'Asset Status','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Asset Status' -Button 'OK' -Icon 'Error' -Message ("'$status' is not one of the allowed statuses.") | Out-Null
             return
         }
 
         if ([string]::IsNullOrWhiteSpace([string]$state.ManagedId)) {
-            [System.Windows.MessageBox]::Show('The device has not loaded yet, so nothing can be written. Select Reload and try again.',
-                'Asset Status','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'Asset Status' -Button 'OK' -Icon 'Warning' -Message 'The device has not loaded yet, so nothing can be written. Select Reload and try again.' | Out-Null
             return
         }
 
@@ -906,21 +910,19 @@ function Show-AssetStatusWindow {
         $newName    = $status
 
         if ($oldName -ceq $newName) {
-            [System.Windows.MessageBox]::Show("The Management name of $deviceName is already '$newName'. Nothing to do.",
-                'Asset Status','OK','Information') | Out-Null
+            Show-ToolkitMessageBox -Title 'Asset Status' -Button 'OK' -Icon 'Information' -Message ("The Management name of $deviceName is already '$newName'. Nothing to do.") | Out-Null
             & $setStatus "Management name is already $newName - nothing was written."
             return
         }
 
         # The old name is overwritten and Intune keeps no history of it, so
         # the prompt shows both names and defaults to No.
-        $confirm = [System.Windows.MessageBox]::Show(
+        $confirm = Show-ToolkitMessageBox -Title 'Confirm Management name change' -Button 'YesNo' -Icon 'Warning' -Default No -Message (
             "Set the Management name of $deviceName to '$newName'?`n`n" +
             "  From: $oldName`n" +
             "  To:   $newName`n`n" +
             "This replaces the Management name in Intune. The device name, serial number, group memberships and assignments are NOT changed, and the device is not retired, wiped or unenrolled.`n`n" +
-            "Intune keeps no history of the previous Management name, so it cannot be restored from here.",
-            'Confirm Management name change','YesNo','Warning',[System.Windows.MessageBoxResult]::No)
+            "Intune keeps no history of the previous Management name, so it cannot be restored from here.")
 
         if ($confirm -ne [System.Windows.MessageBoxResult]::Yes) {
             Write-AstLog 'Update cancelled at the confirmation prompt.' 'INFO'
@@ -939,14 +941,13 @@ function Show-AssetStatusWindow {
             & $setStatus $summary
             Write-AstLog $summary 'OK'
 
-            [System.Windows.MessageBox]::Show(
-                "$summary`n`nFrom: $oldName`nTo:   $newName",
-                'Asset Status','OK','Information') | Out-Null
+            Show-ToolkitMessageBox -Title 'Asset Status' -Button 'OK' -Icon 'Information' -Message (
+                "$summary`n`nFrom: $oldName`nTo:   $newName") | Out-Null
         }
         catch {
             $detail = Write-AstLogException $_ 'Updating the Management name'
             & $setStatus "Update failed: $detail"
-            [System.Windows.MessageBox]::Show($detail,'Asset Status','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Asset Status' -Button 'OK' -Icon 'Error' -Message $detail | Out-Null
         }
         finally { & $setBusy $false }
 
@@ -1055,5 +1056,5 @@ if ($MyInvocation.InvocationName -ne '.') {
         Source       = 'Intune'
     }
 
-    Show-AssetStatusWindow -Device $dev -XamlPath $XamlPath -ShowConsole
+    Show-AssetStatusWindow -Device $dev -ShowConsole
 }

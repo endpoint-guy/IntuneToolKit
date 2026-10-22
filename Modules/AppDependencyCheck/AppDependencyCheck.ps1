@@ -18,10 +18,8 @@
       - The list can be exported to CSV.
 
 .NOTES
-    SELF-CONTAINED - the WPF XAML is embedded below, so AppDependencyCheck.xaml
-    is not required at runtime; embedded XAML is used by default
-    when launched from Toolkit.ps1. Pass -XamlPath to load an external
-    AppDependencyCheck.xaml instead while iterating on the UI.
+    SELF-CONTAINED - the WPF XAML is embedded below, so there is no separate
+    .xaml file to deploy or keep in sync.
 
     Every function here is Adc-prefixed on purpose. This module,
     CopyDeviceGroups.ps1, RemoveDeviceGroups.ps1 and BulkAddToGroup.ps1 are
@@ -37,14 +35,27 @@
     Graph scopes: DeviceManagementApps.Read.All
 #>
 
-[CmdletBinding()]
-param(
-    # Optional dev override: point at an external AppDependencyCheck.xaml to
-    # tweak the UI without recompiling. When omitted, the embedded XAML is used.
-    [string]$XamlPath
-)
-
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms
+
+# ---------------------------------------------------------------------------
+# Shared dialog and loading overlay. Toolkit.ps1 provides the styled
+# versions; these plain stand-ins are only used if this module is run on its
+# own, outside the toolkit.
+# ---------------------------------------------------------------------------
+if (-not (Get-Command -Name Show-ToolkitMessageBox -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitMessageBox {
+        param([string]$Message = '', [string]$Title = '', [string]$Button = 'OK',
+              [string]$Icon = 'None', [string]$Default = 'None')
+        return [System.Windows.MessageBox]::Show($Message, $Title,
+            [System.Windows.MessageBoxButton]$Button, [System.Windows.MessageBoxImage]$Icon,
+            [System.Windows.MessageBoxResult]$Default)
+    }
+}
+if (-not (Get-Command -Name Show-ToolkitProgress -ErrorAction SilentlyContinue)) {
+    function Show-ToolkitProgress { param($Owner, [string]$Heading, [string]$Text, [string]$Detail) }
+    function Update-ToolkitProgress { param([string]$Text, [string]$Detail) }
+    function Close-ToolkitProgress { }
+}
 
 # ---------------------------------------------------------------------------
 # Types used by the window.
@@ -106,7 +117,7 @@ $AdcXamlString = @'
 
     <Window.Resources>
 
-        <!-- Theme brushes. Kept in sync with MainWindow.xaml so the child -->
+        <!-- Theme brushes. Kept in sync with Toolkit.ps1 so the child     -->
         <!-- window matches the shell even when opened standalone.         -->
         <SolidColorBrush x:Key="WindowBrush"           Color="#1F1F1F"/>
         <SolidColorBrush x:Key="CardBrush"             Color="#2B2B2B"/>
@@ -322,7 +333,7 @@ $AdcXamlString = @'
         <!-- Fully retemplated ComboBox: the stock control keeps a system-drawn -->
         <!-- chrome that ignores Background, so it renders unreadable dark text -->
         <!-- on a dark surface. Templating it is the only reliable fix.         -->
-        <!-- Kept in sync with the ComboBox in MainWindow.xaml.                 -->
+        <!-- Kept in sync with the ComboBox in Toolkit.ps1.                     -->
         <Style TargetType="ComboBoxItem">
             <Setter Property="Padding" Value="9,6"/>
             <Setter Property="FontSize" Value="13"/>
@@ -1023,25 +1034,19 @@ function Show-AppDependencyCheckWindow {
     [CmdletBinding()]
     param(
         $Owner = $null,
-        [string]$XamlPath,
         [switch]$ShowConsole
     )
 
     # --- load XAML ---------------------------------------------------------
     $xamlText = $AdcXamlString
-    if ($XamlPath -and (Test-Path $XamlPath)) {
-        $xamlText = Get-Content -Path $XamlPath -Raw
-    }
-
     try {
         [xml]$xamlDoc = $xamlText
         $reader = New-Object System.Xml.XmlNodeReader $xamlDoc
         $win    = [Windows.Markup.XamlReader]::Load($reader)
     }
     catch {
-        [System.Windows.MessageBox]::Show(
-            "The App Dependency Check XAML could not be loaded:`n`n$($_.Exception.Message)",
-            'XAML load error','OK','Error') | Out-Null
+        Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message (
+            "The App Dependency Check XAML could not be loaded:`n`n$($_.Exception.Message)") | Out-Null
         return
     }
 
@@ -1054,8 +1059,7 @@ function Show-AppDependencyCheckWindow {
                      'ConsolePanel')) {
         $ctl = $win.FindName($n)
         if ($null -eq $ctl) {
-            [System.Windows.MessageBox]::Show("Control '$n' was not found in the App Dependency Check XAML.",
-                'XAML load error','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'XAML load error' -Button 'OK' -Icon 'Error' -Message ("Control '$n' was not found in the App Dependency Check XAML.") | Out-Null
             return
         }
         $ui[$n] = $ctl
@@ -1079,6 +1083,7 @@ function Show-AppDependencyCheckWindow {
     $setStatus = {
         param([string]$Message)
         $ui.StatusText.Text = $Message
+        Update-ToolkitProgress -Text $Message
         $win.Dispatcher.Invoke([action]{}, [Windows.Threading.DispatcherPriority]::Render)
     }
 
@@ -1110,6 +1115,8 @@ function Show-AppDependencyCheckWindow {
     $setBusy = {
         param([bool]$Busy)
         $state.Busy = $Busy
+        # Loading overlay with the moving bar over this window while it works.
+        if ($Busy) { Show-ToolkitProgress -Owner $win -Heading 'App Dependency Check' -Text 'Working...' } else { Close-ToolkitProgress }
         $win.Cursor = if ($Busy) { [System.Windows.Input.Cursors]::Wait } else { $null }
         foreach ($b in @($ui.BtnScan, $ui.BtnReload, $ui.BtnExportCsv)) { $b.IsEnabled = -not $Busy }
         # The app list stays disabled until it has actually been populated.
@@ -1203,7 +1210,7 @@ function Show-AppDependencyCheckWindow {
             $detail = Write-AdcLogException $_ 'Loading the app list'
             & $setStatus "Could not load the app list: $detail"
             $ui.TxtSummary.Text = "The app list could not be loaded: $detail"
-            [System.Windows.MessageBox]::Show($detail,'App Dependency Check','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'App Dependency Check' -Button 'OK' -Icon 'Error' -Message $detail | Out-Null
         }
         finally { & $setBusy $false }
     }
@@ -1217,8 +1224,7 @@ function Show-AppDependencyCheckWindow {
 
         $selected = $ui.CmbApp.SelectedItem
         if ($null -eq $selected -or [string]::IsNullOrWhiteSpace([string]$selected.Id)) {
-            [System.Windows.MessageBox]::Show('Pick an app from the list first.',
-                'App Dependency Check','OK','Warning') | Out-Null
+            Show-ToolkitMessageBox -Title 'App Dependency Check' -Button 'OK' -Icon 'Warning' -Message 'Pick an app from the list first.' | Out-Null
             return
         }
 
@@ -1266,7 +1272,7 @@ function Show-AppDependencyCheckWindow {
         catch {
             $detail = Write-AdcLogException $_ 'Finding dependents'
             & $setStatus "Search failed: $detail"
-            [System.Windows.MessageBox]::Show($detail,'App Dependency Check','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'App Dependency Check' -Button 'OK' -Icon 'Error' -Message $detail | Out-Null
         }
         finally { & $setBusy $false }
     }
@@ -1274,8 +1280,7 @@ function Show-AppDependencyCheckWindow {
     # --- export ------------------------------------------------------------
     $doExport = {
         if (@($state.Dependents).Count -eq 0) {
-            [System.Windows.MessageBox]::Show('Run a search first - there is nothing to export.',
-                'App Dependency Check','OK','Information') | Out-Null
+            Show-ToolkitMessageBox -Title 'App Dependency Check' -Button 'OK' -Icon 'Information' -Message 'Run a search first - there is nothing to export.' | Out-Null
             return
         }
 
@@ -1297,7 +1302,7 @@ function Show-AppDependencyCheckWindow {
         }
         catch {
             Write-AdcLog "Export failed: $($_.Exception.Message)" 'ERROR'
-            [System.Windows.MessageBox]::Show($_.Exception.Message,'Export failed','OK','Error') | Out-Null
+            Show-ToolkitMessageBox -Title 'Export failed' -Button 'OK' -Icon 'Error' -Message ($_.Exception.Message) | Out-Null
         }
     }
 
@@ -1381,5 +1386,5 @@ function Show-AppDependencyCheckWindow {
 if ($MyInvocation.InvocationName -ne '.') {
     Import-Module Microsoft.Graph.Authentication -ErrorAction Stop
     Connect-MgGraph -Scopes 'DeviceManagementApps.Read.All' -NoWelcome
-    Show-AppDependencyCheckWindow -XamlPath $XamlPath -ShowConsole
+    Show-AppDependencyCheckWindow -ShowConsole
 }
