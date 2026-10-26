@@ -426,7 +426,7 @@ $Script:TkProgressXaml = @"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ResizeMode="NoResize" ShowInTaskbar="False" ShowActivated="False"
         WindowStartupLocation="Manual" FontFamily="Segoe UI" Opacity="0">
-    <Grid Background="#B8000000">
+    <Grid x:Name="ProgressBackdrop" Background="#B8000000">
         <Border x:Name="LoadingCard" Width="500" Padding="30,26"
                 HorizontalAlignment="Center" VerticalAlignment="Center"
                 Background="#2B2B2B" BorderBrush="#2B7CD3" BorderThickness="1" CornerRadius="10">
@@ -471,6 +471,12 @@ $Script:TkProgressScript = {
     $w.Height = [double]$Bounds.Height
     if ($OwnerHandle -ne [IntPtr]::Zero) {
         (New-Object System.Windows.Interop.WindowInteropHelper $w).Owner = $OwnerHandle
+    }
+    else {
+        # First-time setup has no owner. Keep only its compact card visible
+        # above other windows without dimming or blocking the desktop.
+        $w.FindName('ProgressBackdrop').Background = [System.Windows.Media.Brushes]::Transparent
+        $w.Topmost = $true
     }
 
     $card = $w.FindName('LoadingCard')
@@ -564,7 +570,20 @@ function Show-ToolkitProgress {
                 $bounds = @{ Left = $topLeft.X; Top = $topLeft.Y; Width = $root.ActualWidth; Height = $root.ActualHeight }
             }
         }
-        if ($null -eq $bounds) { return }
+        if ($null -eq $bounds) {
+            # First-time setup runs before the main toolkit window exists.
+            # Centre a compact progress card without covering or disabling
+            # the rest of the desktop.
+            $workArea = [System.Windows.SystemParameters]::WorkArea
+            $width = 620.0
+            $height = 260.0
+            $bounds = @{
+                Left = $workArea.Left + (($workArea.Width - $width) / 2)
+                Top = $workArea.Top + (($workArea.Height - $height) / 2)
+                Width = $width
+                Height = $height
+            }
+        }
 
         $sync = [hashtable]::Synchronized(@{
             Heading = $Heading; Text = $Text; Detail = $Detail; Hidden = $false; Close = $false
@@ -628,19 +647,32 @@ if (-not (Get-Module -ListAvailable -Name Microsoft.Graph.Authentication)) {
         Show-ToolkitMessageBox -Title 'First-time setup' -Button 'OK' -Icon 'Information' -Message (
             "Microsoft.Graph.Authentication is not installed. The toolkit will install it for the current user now.`n`nThis first-time setup can take a few minutes.") | Out-Null
 
-        # Windows PowerShell 5.1 can otherwise negotiate an obsolete protocol
-        # when contacting the PowerShell Gallery.
-        [Net.ServicePointManager]::SecurityProtocol =
-            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        Show-ToolkitProgress -Heading 'First-time setup' `
+            -Text 'Preparing Microsoft Graph authentication...' `
+            -Detail 'Please keep the toolkit open. This can take a few minutes on the first launch.'
 
-        # Install the NuGet provider non-interactively when an older PowerShellGet
-        # environment does not already have it.
-        if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
-            Install-PackageProvider -Name NuGet -Scope CurrentUser -Force -ErrorAction Stop | Out-Null
+        try {
+            # Windows PowerShell 5.1 can otherwise negotiate an obsolete protocol
+            # when contacting the PowerShell Gallery.
+            [Net.ServicePointManager]::SecurityProtocol =
+                [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
+            # Install the NuGet provider non-interactively when an older PowerShellGet
+            # environment does not already have it.
+            if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+                Update-ToolkitProgress -Text 'Installing required package provider...' `
+                    -Detail 'Preparing PowerShell to download Microsoft Graph authentication.'
+                Install-PackageProvider -Name NuGet -Scope CurrentUser -Force -ErrorAction Stop | Out-Null
+            }
+
+            Update-ToolkitProgress -Text 'Installing Microsoft Graph authentication...' `
+                -Detail 'Downloading and installing the authentication module for your Windows account.'
+            Install-Module Microsoft.Graph.Authentication `
+                -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
         }
-
-        Install-Module Microsoft.Graph.Authentication `
-            -Scope CurrentUser -Force -AllowClobber -ErrorAction Stop
+        finally {
+            Close-ToolkitProgress
+        }
     }
     catch {
         Show-ToolkitMessageBox -Title 'First-time setup failed' -Button 'OK' -Icon 'Error' -Message (
@@ -1507,6 +1539,40 @@ $XamlString = @"
                     <TextBlock x:Name="LoadingDetail" Text="Please keep this window open while the operation completes."
                                FontSize="11.5" Foreground="{DynamicResource SubtleTextBrush}" TextWrapping="Wrap" TextAlignment="Center"
                                HorizontalAlignment="Center" Margin="0,14,0,0"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+
+        <!-- Deliberate startup gate: authentication begins only after the user
+             chooses Connect, so the temporary minimise is never surprising. -->
+        <Grid x:Name="ConnectOverlay" Grid.RowSpan="3" Panel.ZIndex="100"
+              Background="{DynamicResource WindowBrush}">
+            <Border Width="520" Padding="42,38" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource CardBorderBrush}"
+                    BorderThickness="1" CornerRadius="12">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="28" ShadowDepth="0" Opacity="0.45" Color="Black"/>
+                </Border.Effect>
+                <StackPanel>
+                    <Border Width="58" Height="58" CornerRadius="29" HorizontalAlignment="Center"
+                            Background="{DynamicResource AccentBrush}" Margin="0,0,0,20">
+                        <TextBlock Text="&#xE72E;" FontFamily="Segoe MDL2 Assets" FontSize="26"
+                                   Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <TextBlock Text="Connect to Microsoft Graph" FontSize="24" FontWeight="SemiBold"
+                               Foreground="{DynamicResource TitleTextBrush}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Sign in with your administrator account to load Intune and Autopilot device data."
+                               FontSize="13.5" Foreground="{DynamicResource SubtleTextBrush}" TextWrapping="Wrap"
+                               TextAlignment="Center" Margin="18,12,18,0"/>
+                    <Border Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource InputBorderBrush}"
+                            BorderThickness="1" CornerRadius="7" Padding="14,11" Margin="0,22,0,22">
+                        <TextBlock Text="The toolkit will temporarily minimize while the Microsoft sign-in window is open, then return automatically."
+                                   FontSize="12.5" Foreground="{DynamicResource TextBrush}" TextWrapping="Wrap" TextAlignment="Center"/>
+                    </Border>
+                    <Button x:Name="BtnConnectGraph" Style="{StaticResource PrimaryButton}"
+                            Content="Connect to Graph" Height="42" MinWidth="190" Padding="22,0"
+                            HorizontalAlignment="Center"/>
                 </StackPanel>
             </Border>
         </Grid>
@@ -2402,10 +2468,18 @@ function Connect-ToolkitGraph {
     Set-Busy $true 'Waiting for Microsoft Graph sign-in...'
     $consoleSpot = $null
     $connected = $false
+    $connectError = $null
+    $windowStateBeforeSignIn = $Window.WindowState
     try {
         Set-Status 'Opening Microsoft Graph sign-in prompt...'
 
-        # Bring the sign-in box up on the same display as the toolkit.
+        # Connect-MgGraph parents WAM to the PowerShell host rather than this
+        # WPF window. Minimise the toolkit for the entire interactive flow so
+        # the account picker, credential and MFA stages cannot open behind it.
+        $Window.WindowState = [System.Windows.WindowState]::Minimized
+        $Window.Dispatcher.Invoke([action]{ }, [System.Windows.Threading.DispatcherPriority]::Render)
+
+        # Keep the hidden console on the toolkit display so WAM opens there.
         $consoleSpot = Move-ConsoleToToolkitScreen
 
         $params = @{ Scopes = $Script:GraphScopes; NoWelcome = $true }
@@ -2420,14 +2494,33 @@ function Connect-ToolkitGraph {
         }
     }
     catch {
+        $connectError = $_
         Update-ConnectionUi
         Set-Status "Connection failed: $($_.Exception.Message)"
-        Show-ToolkitMessageBox -Title 'Connection failed' -Button 'OK' -Icon 'Error' -Message ($_.Exception.Message) | Out-Null
     }
     finally {
         Restore-ConsolePosition $consoleSpot
+        # Restore only after Connect-MgGraph has closed every WAM stage.
+        try {
+            $Window.WindowState = $windowStateBeforeSignIn
+            [void]$Window.Activate()
+        }
+        catch { }
         # Keep the overlay up when the device load follows straight on.
         if (-not ($connected -and $LoadDeviceData)) { Set-Busy $false }
+    }
+
+    if ($connected) {
+        $ConnectOverlay.Visibility = [System.Windows.Visibility]::Collapsed
+    }
+    else {
+        $ConnectOverlay.Visibility = [System.Windows.Visibility]::Visible
+        $BtnConnectGraph.IsEnabled = $true
+    }
+
+    # Any failure message is shown only after the toolkit is visible again.
+    if ($null -ne $connectError) {
+        Show-ToolkitMessageBox -Title 'Connection failed' -Button 'OK' -Icon 'Error' -Message ($connectError.Exception.Message) | Out-Null
     }
 
     if ($connected -and $LoadDeviceData) {
@@ -2437,6 +2530,11 @@ function Connect-ToolkitGraph {
     return $connected
 }
 
+
+$BtnConnectGraph.Add_Click({
+    $BtnConnectGraph.IsEnabled = $false
+    [void](Connect-ToolkitGraph -LoadDeviceData)
+})
 
 $BtnSearch.Add_Click({ Invoke-DeviceSearch })
 
@@ -3659,15 +3757,16 @@ function Show-RecentChangesIfNeeded {
 # ---------------------------------------------------------------------------
 Update-ConnectionUi
 
-# Show release notes first, then prompt for Graph sign-in and preload the
-# Intune and Autopilot cache. InvokeAsync lets the first frame paint first.
+# Show release notes first, then leave authentication to the centered Connect
+# button. InvokeAsync lets the first frame paint before the notes dialog opens.
 $Script:StartupInitialized = $false
 $Window.Add_ContentRendered({
     if ($Script:StartupInitialized) { return }
     $Script:StartupInitialized = $true
     $Window.Dispatcher.InvokeAsync([action]{
         Show-RecentChangesIfNeeded
-        [void](Connect-ToolkitGraph -LoadDeviceData)
+        Set-Status 'Select Connect to Graph to sign in and load device data.'
+        [void]$BtnConnectGraph.Focus()
     }, [Windows.Threading.DispatcherPriority]::Background) | Out-Null
 })
 
