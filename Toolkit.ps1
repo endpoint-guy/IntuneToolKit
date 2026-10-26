@@ -783,6 +783,7 @@ $Script:AssetStatusValues = $null
 
 # Branding defaults. ModuleConfig.psd1 can override these values.
 $Script:ToolkitName = 'EndpointGuy Intune Toolkit'
+$Script:ToolkitVersion = '2026.10.26'
 $Script:WebsiteText = 'endpointguy.com'
 $Script:WebsiteUrl  = 'https://endpointguy.com'
 $Script:LogoFile    = 'EGLogoNew.png'
@@ -1228,9 +1229,12 @@ $XamlString = @"
                            VerticalAlignment="Center" Stretch="Uniform"
                            RenderOptions.BitmapScalingMode="HighQuality"/>
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock x:Name="HeaderTitle" Text="EndpointGuy Intune Toolkit"
-                                   FontSize="19" FontWeight="SemiBold"
-                                   Foreground="{StaticResource TitleTextBrush}"/>
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock x:Name="HeaderTitle" Text="EndpointGuy Intune Toolkit"
+                                       FontSize="19" FontWeight="SemiBold" Foreground="{StaticResource TitleTextBrush}"/>
+                            <TextBlock x:Name="HeaderVersion" Text="v2026.10.26" FontSize="11"
+                                       Foreground="{StaticResource SubtleTextBrush}" Margin="10,5,0,0"/>
+                        </StackPanel>
                         <TextBlock FontSize="11.5" Margin="0,1,0,0">
                             <Hyperlink x:Name="LnkSite"
                                        NavigateUri="https://endpointguy.com"
@@ -3273,9 +3277,11 @@ $BtnBulkAssetStatus.Add_Click({
 # WPF will not navigate on its own; the RequestNavigate event must be handled.
 # ---------------------------------------------------------------------------
 $HeaderTitle = $Window.FindName('HeaderTitle')
+$HeaderVersion = $Window.FindName('HeaderVersion')
 $LnkSite = $Window.FindName('LnkSite')
 if ($HeaderTitle) { $HeaderTitle.Text = $Script:ToolkitName }
 if ($Window) { $Window.Title = $Script:ToolkitName }
+if ($HeaderVersion) { $HeaderVersion.Text = 'v' + $Script:ToolkitVersion }
 if ($LnkSite) {
     try {
         $LnkSite.Inlines.Clear()
@@ -3516,6 +3522,7 @@ if ($LogoImage -and (Test-Path $LogoPath)) {
         $bmp.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
         $bmp.EndInit()
         $LogoImage.Source = $bmp
+        $Window.Icon = $bmp
     }
     # A missing or corrupt logo must never stop the toolkit loading.
     catch { $LogoImage.Visibility = [System.Windows.Visibility]::Collapsed }
@@ -3595,7 +3602,7 @@ Update-ModuleUi
 # Recent changes - shown once per toolkit version for each Windows user.
 # Bump ToolkitRelease whenever the list below changes for a new release.
 # ---------------------------------------------------------------------------
-$Script:ToolkitRelease = '2026.10.22.1'
+$Script:ToolkitRelease = '2026.10.26'
 
 function Show-RecentChangesIfNeeded {
     $stateRoot = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'EndpointGuy\IntuneToolkit'
